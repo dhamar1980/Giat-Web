@@ -1,0 +1,922 @@
+{
+	"info": {
+		"_postman_id": "giat-api-collection-2026",
+		"name": "GIAT - Ginjal Sehat RESTful API",
+		"description": "Koleksi API lengkap untuk aplikasi mobile kesehatan ginjal GIAT (Pasien, Dokter, Apotek)",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://127.0.0.1:8000/api",
+			"type": "string"
+		},
+		{
+			"key": "token",
+			"value": "",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "1. Authentication",
+			"item": [
+				{
+					"name": "Register Pasien",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"nama\": \"Andi Pratama\",\n  \"email\": \"andi.pratama@gmail.com\",\n  \"password\": \"password123\",\n  \"password_confirmation\": \"password123\",\n  \"no_hp\": \"081234567899\",\n  \"alamat\": \"Jl. Merdeka No. 10, Bandung\",\n  \"jenis_kelamin\": \"L\",\n  \"tanggal_lahir\": \"1996-05-15\",\n  \"gol_darah\": \"O\",\n  \"NIK\": \"3273011505960001\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/register/pasien",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "register", "pasien"]
+						}
+					}
+				},
+				{
+					"name": "Register Dokter",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"nama\": \"dr. Hendra Wijaya, Sp.PD\",\n  \"email\": \"dr.hendra@gmail.com\",\n  \"password\": \"password123\",\n  \"password_confirmation\": \"password123\",\n  \"no_hp\": \"081298761234\",\n  \"no_sip\": \"503/SIP-DS/0991/DINKES/2024\",\n  \"no_str\": \"31.2.1.100.3.21.789456\",\n  \"spesialisasi\": \"Dokter Spesialis Penyakit Dalam\",\n  \"institusi\": \"RS Ginjal Terpadu Bandung\",\n  \"jenis_kelamin\": \"L\",\n  \"alamat_praktik\": \"Jl. Pasteur No. 50, Bandung\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/register/dokter",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "register", "dokter"]
+						}
+					}
+				},
+				{
+					"name": "Register Apotek",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"nama\": \"Apotek Sehat Sejahtera\",\n  \"email\": \"apotek.sehat@gmail.com\",\n  \"password\": \"password123\",\n  \"password_confirmation\": \"password123\",\n  \"no_sip\": \"445/SIA/0301/DPMPTSP/2024\",\n  \"jam_operasional\": \"24 Jam\",\n  \"lokasi_apotek\": \"Jl. Gatot Subroto No. 88, Bandung\",\n  \"area_layanan\": \"Bandung Kota dan Sekitarnya\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/register/apotek",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "register", "apotek"]
+						}
+					}
+				},
+				{
+					"name": "Login Pasien (Auto-Save Token)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.success && jsonData.data && jsonData.data.access_token) {",
+									"    pm.collectionVariables.set('token', jsonData.data.access_token);",
+									"    console.log('Token saved:', jsonData.data.access_token);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"siti.aisyah@gmail.com\",\n  \"password\": \"password123\",\n  \"role\": \"pasien\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/login",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "login"]
+						}
+					}
+				},
+				{
+					"name": "Login Dokter (Auto-Save Token)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.success && jsonData.data && jsonData.data.access_token) {",
+									"    pm.collectionVariables.set('token', jsonData.data.access_token);",
+									"    console.log('Token saved:', jsonData.data.access_token);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"dr.budi@gmail.com\",\n  \"password\": \"password123\",\n  \"role\": \"dokter\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/login",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "login"]
+						}
+					}
+				},
+				{
+					"name": "Login Apotek (Auto-Save Token)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.success && jsonData.data && jsonData.data.access_token) {",
+									"    pm.collectionVariables.set('token', jsonData.data.access_token);",
+									"    console.log('Token saved:', jsonData.data.access_token);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"kf.dago@gmail.com\",\n  \"password\": \"password123\",\n  \"role\": \"apotek\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/login",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "login"]
+						}
+					}
+				},
+				{
+					"name": "Forgot Password (Kirim OTP)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"siti.aisyah@gmail.com\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/forgot-password",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "forgot-password"]
+						}
+					}
+				},
+				{
+					"name": "Verify OTP",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"siti.aisyah@gmail.com\",\n  \"otp\": \"123456\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/verify-otp",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "verify-otp"]
+						}
+					}
+				},
+				{
+					"name": "Resend OTP",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"siti.aisyah@gmail.com\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/resend-otp",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "resend-otp"]
+						}
+					}
+				},
+				{
+					"name": "Reset Password",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"siti.aisyah@gmail.com\",\n  \"token\": \"123456\",\n  \"password\": \"newpassword123\",\n  \"password_confirmation\": \"newpassword123\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/reset-password",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "reset-password"]
+						}
+					}
+				},
+				{
+					"name": "Get Current Session (Me)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/me",
+							"host": ["{{base_url}}"],
+							"path": ["me"]
+						}
+					}
+				},
+				{
+					"name": "Logout",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/logout",
+							"host": ["{{base_url}}"],
+							"path": ["logout"]
+						}
+					}
+				},
+				{
+					"name": "Tandai Notifikasi Dibaca",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/notifikasi/1/read",
+							"host": ["{{base_url}}"],
+							"path": ["notifikasi", "1", "read"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "2. Pasien",
+			"item": [
+				{
+					"name": "Beranda Pasien (Home)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/pasien/home",
+							"host": ["{{base_url}}"],
+							"path": ["pasien", "home"]
+						}
+					}
+				},
+				{
+					"name": "Daftar Edukasi Ginjal",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/pasien/edukasi",
+							"host": ["{{base_url}}"],
+							"path": ["pasien", "edukasi"]
+						}
+					}
+				},
+				{
+					"name": "Pengingat Minum Obat (Reminder List)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/pasien/reminder",
+							"host": ["{{base_url}}"],
+							"path": ["pasien", "reminder"]
+						}
+					}
+				},
+				{
+					"name": "Tambah Pengingat Minum Obat",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"nama\": \"Minum Obat Renalvit\",\n  \"tanggal\": \"2026-09-30\",\n  \"waktu\": \"07:30\",\n  \"keterangan\": \"1 tablet sesudah makan pagi\",\n  \"pengulangan\": \"Setiap Hari\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/pasien/reminder",
+							"host": ["{{base_url}}"],
+							"path": ["pasien", "reminder"]
+						}
+					}
+				},
+				{
+					"name": "Toggle Status Pengingat On/Off",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/pasien/reminder/1/toggle",
+							"host": ["{{base_url}}"],
+							"path": ["pasien", "reminder", "1", "toggle"]
+						}
+					}
+				},
+				{
+					"name": "Pantau Summary & IMT Pasien",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/pasien/pantau/summary",
+							"host": ["{{base_url}}"],
+							"path": ["pasien", "pantau", "summary"]
+						}
+					}
+				},
+				{
+					"name": "Catat Pantau Harian (BB, TB, Keluhan)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"bb\": 62.5,\n  \"tb\": 165,\n  \"keluhan\": \"Nyeri ringan pinggang kanan\",\n  \"detail_keluhan\": \"Terasa saat duduk terlalu lama\",\n  \"catatan\": \"Sudah minum air putih 1.8 liter hari ini\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/pasien/pantau",
+							"host": ["{{base_url}}"],
+							"path": ["pasien", "pantau"]
+						}
+					}
+				},
+				{
+					"name": "Pertanyaan Skrining PRAGI CKD",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/pasien/pragi/pertanyaan",
+							"host": ["{{base_url}}"],
+							"path": ["pasien", "pragi", "pertanyaan"]
+						}
+					}
+				},
+				{
+					"name": "Submit Skrining PRAGI",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"jawaban\": {\n    \"1\": \"ya\",\n    \"2\": \"tidak\",\n    \"3\": \"tidak\",\n    \"4\": \"ya\",\n    \"5\": \"tidak\",\n    \"6\": \"tidak\",\n    \"7\": \"tidak\",\n    \"8\": \"tidak\",\n    \"9\": \"tidak\",\n    \"10\": \"tidak\"\n  }\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/pasien/pragi/skrining",
+							"host": ["{{base_url}}"],
+							"path": ["pasien", "pragi", "skrining"]
+						}
+					}
+				},
+				{
+					"name": "Chatbot AI PRAGI (Asisten Cerdas Ginjal)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"pesan\": \"Halo PRAGI, apa saja pantangan makanan untuk penderita penurunan fungsi ginjal?\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/pasien/pragi/chat",
+							"host": ["{{base_url}}"],
+							"path": ["pasien", "pragi", "chat"]
+						}
+					}
+				},
+				{
+					"name": "Katalog Obat Bebas & Terbatas",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/pasien/obat/katalog",
+							"host": ["{{base_url}}"],
+							"path": ["pasien", "obat", "katalog"]
+						}
+					}
+				},
+				{
+					"name": "Beli Obat Umum Bebas",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"id_obat\": 1,\n  \"id_apotek\": 1,\n  \"jumlah\": 1,\n  \"alamat_pengiriman\": \"Jl. Dago Asri No. 12, Bandung\",\n  \"catatan\": \"Tolong dikirim sore ini ya\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/pasien/obat/beli-umum",
+							"host": ["{{base_url}}"],
+							"path": ["pasien", "obat", "beli-umum"]
+						}
+					}
+				},
+				{
+					"name": "Resep Elektronik Saya",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/pasien/obat/resep-saya",
+							"host": ["{{base_url}}"],
+							"path": ["pasien", "obat", "resep-saya"]
+						}
+					}
+				},
+				{
+					"name": "Lacak Pengiriman Pesanan Obat",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/pasien/obat/lacak/1",
+							"host": ["{{base_url}}"],
+							"path": ["pasien", "obat", "lacak", "1"]
+						}
+					}
+				},
+				{
+					"name": "Notifikasi Pasien",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/pasien/notifikasi",
+							"host": ["{{base_url}}"],
+							"path": ["pasien", "notifikasi"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "3. Telemedisin & Konsultasi",
+			"item": [
+				{
+					"name": "Kategori Spesialisasi Dokter",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/konsultasi/kategori-dokter",
+							"host": ["{{base_url}}"],
+							"path": ["konsultasi", "kategori-dokter"]
+						}
+					}
+				},
+				{
+					"name": "Daftar Dokter Tersedia",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/konsultasi/dokter",
+							"host": ["{{base_url}}"],
+							"path": ["konsultasi", "dokter"]
+						}
+					}
+				},
+				{
+					"name": "Booking Dokter",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"id_dokter\": 3,\n  \"tanggal_konsultasi\": \"2026-10-01 09:00:00\",\n  \"isi_konsultasi\": \"Ingin konsultasi hasil laboratorium kreatinin 1.8 mg/dL dan keluhan nokturia.\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/konsultasi/booking",
+							"host": ["{{base_url}}"],
+							"path": ["konsultasi", "booking"]
+						}
+					}
+				},
+				{
+					"name": "Bayar Konsultasi",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"metode_pembayaran\": \"qris\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/konsultasi/1/bayar",
+							"host": ["{{base_url}}"],
+							"path": ["konsultasi", "1", "bayar"]
+						}
+					}
+				},
+				{
+					"name": "Ambil Riwayat Pesan Chat",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/konsultasi/1/pesan",
+							"host": ["{{base_url}}"],
+							"path": ["konsultasi", "1", "pesan"]
+						}
+					}
+				},
+				{
+					"name": "Kirim Pesan Chat Dokter - Pasien",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"pesan\": \"Halo Dokter, berikut hasil lab terbaru saya.\",\n  \"tipe\": \"text\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/konsultasi/1/pesan",
+							"host": ["{{base_url}}"],
+							"path": ["konsultasi", "1", "pesan"]
+						}
+					}
+				},
+				{
+					"name": "Akses Room Video Call",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/konsultasi/1/video-call",
+							"host": ["{{base_url}}"],
+							"path": ["konsultasi", "1", "video-call"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "4. Dokter",
+			"item": [
+				{
+					"name": "Dashboard Dokter",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/dokter/dashboard",
+							"host": ["{{base_url}}"],
+							"path": ["dokter", "dashboard"]
+						}
+					}
+				},
+				{
+					"name": "Jadwal Konsultasi Dokter",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/dokter/jadwal",
+							"host": ["{{base_url}}"],
+							"path": ["dokter", "jadwal"]
+						}
+					}
+				},
+				{
+					"name": "Daftar Pasien",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/dokter/pasien",
+							"host": ["{{base_url}}"],
+							"path": ["dokter", "pasien"]
+						}
+					}
+				},
+				{
+					"name": "Rekam Medis & Pantau Pasien",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/dokter/pasien/1/detail",
+							"host": ["{{base_url}}"],
+							"path": ["dokter", "pasien", "1", "detail"]
+						}
+					}
+				},
+				{
+					"name": "Terbitkan Resep Obat Elektronik",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"id_pasien\": 1,\n  \"id_obat\": 4,\n  \"dosis\": \"3x1 tablet sesudah makan bersama makanan utama\",\n  \"id_apotek\": 1,\n  \"id_konsultasi\": 1\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/dokter/resep",
+							"host": ["{{base_url}}"],
+							"path": ["dokter", "resep"]
+						}
+					}
+				},
+				{
+					"name": "Rekomendasi Obat Peresepan",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/dokter/obat-rekomendasi",
+							"host": ["{{base_url}}"],
+							"path": ["dokter", "obat-rekomendasi"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "5. Apotek",
+			"item": [
+				{
+					"name": "Dashboard Apotek",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/apotek/dashboard",
+							"host": ["{{base_url}}"],
+							"path": ["apotek", "dashboard"]
+						}
+					}
+				},
+				{
+					"name": "Daftar Pesanan Pasien",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/apotek/pesanan",
+							"host": ["{{base_url}}"],
+							"path": ["apotek", "pesanan"]
+						}
+					}
+				},
+				{
+					"name": "Terima Pesanan Obat",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/apotek/pesanan/3/terima",
+							"host": ["{{base_url}}"],
+							"path": ["apotek", "pesanan", "3", "terima"]
+						}
+					}
+				},
+				{
+					"name": "Proses & Kirim Pesanan (Beri Resi)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"status_pesanan\": \"dikirim\",\n  \"nomor_resi\": \"GIAT-BDG-998877\",\n  \"kurir\": \"GIAT Express Medika\",\n  \"catatan\": \"Paket obat telah dibawa kurir apotek\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/apotek/pesanan/3/proses",
+							"host": ["{{base_url}}"],
+							"path": ["apotek", "pesanan", "3", "proses"]
+						}
+					}
+				},
+				{
+					"name": "Validasi Resep Dokter oleh Apoteker",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/apotek/resep/5/validasi",
+							"host": ["{{base_url}}"],
+							"path": ["apotek", "resep", "5", "validasi"]
+						}
+					}
+				},
+				{
+					"name": "Katalog & Stok Apotek",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/apotek/obat",
+							"host": ["{{base_url}}"],
+							"path": ["apotek", "obat"]
+						}
+					}
+				},
+				{
+					"name": "Update Stok Obat Apotek",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"id_obat\": 4,\n  \"mode\": \"tambah\",\n  \"jumlah\": 20\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/apotek/obat/update-stock",
+							"host": ["{{base_url}}"],
+							"path": ["apotek", "obat", "update-stock"]
+						}
+					}
+				},
+				{
+					"name": "Toggle Status Buka / Tutup Apotek",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/apotek/status-layanan",
+							"host": ["{{base_url}}"],
+							"path": ["apotek", "status-layanan"]
+						}
+					}
+				}
+			]
+		}
+	]
+}
