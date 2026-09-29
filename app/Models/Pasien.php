@@ -18,6 +18,8 @@ class Pasien extends Authenticatable
     protected $fillable = [
         'nama',
         'email',
+        'firebase_uid',
+        'auth_provider',
         'password',
         'no_hp',
         'alamat',

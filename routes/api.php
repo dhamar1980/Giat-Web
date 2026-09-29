@@ -34,6 +34,18 @@ Route::prefix('auth')->group(function () {
     Route::post('/verify-otp', [AuthController::class, 'verifyOtp']);
     Route::post('/resend-otp', [AuthController::class, 'resendOtp']);
     Route::post('/reset-password', [AuthController::class, 'resetPassword']);
+
+    // Firebase Authentication (Native Email/Password, Google Sign-In & Token Sync)
+    Route::prefix('firebase')->group(function () {
+        Route::post('/register', [AuthController::class, 'registerFirebase']);
+        Route::post('/login', [AuthController::class, 'loginFirebase']);
+        Route::post('/google', [AuthController::class, 'googleSignIn']);
+        Route::post('/verify-token', [AuthController::class, 'verifyFirebaseToken']);
+        Route::post('/forgot-password', [AuthController::class, 'firebaseForgotPassword']);
+    });
+
+    // Shortcut Google Sign-In langsung di /auth/google
+    Route::post('/google', [AuthController::class, 'googleSignIn']);
 });
 
 // Shortcut level atas (Public)
@@ -41,6 +53,7 @@ Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
 Route::post('/forgot-password', [AuthController::class, 'forgotPassword']);
 Route::post('/reset-password', [AuthController::class, 'resetPassword']);
+Route::post('/google-login', [AuthController::class, 'googleSignIn']);
 
 // =========================================================================
 // 2. SANCTUM PROTECTED ROUTES (auth:sanctum)

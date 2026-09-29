@@ -18,6 +18,8 @@ class Dokter extends Authenticatable
     protected $fillable = [
         'nama',
         'email',
+        'firebase_uid',
+        'auth_provider',
         'password',
         'no_hp',
         'no_sip',

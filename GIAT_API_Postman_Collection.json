@@ -257,6 +257,161 @@
 					}
 				},
 				{
+					"name": "Register Firebase Native (Email & Password)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.success && jsonData.data && jsonData.data.access_token) {",
+									"    pm.collectionVariables.set('token', jsonData.data.access_token);",
+									"    console.log('Firebase Token saved:', jsonData.data.access_token);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"nama\": \"Budi Santoso\",\n  \"email\": \"budi.santoso@gmail.com\",\n  \"password\": \"password123\",\n  \"role\": \"pasien\",\n  \"no_hp\": \"081234567890\",\n  \"alamat\": \"Jl. Asia Afrika No. 12, Bandung\",\n  \"jenis_kelamin\": \"L\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/firebase/register",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "firebase", "register"]
+						}
+					}
+				},
+				{
+					"name": "Login Firebase Native (Email & Password)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.success && jsonData.data && jsonData.data.access_token) {",
+									"    pm.collectionVariables.set('token', jsonData.data.access_token);",
+									"    console.log('Firebase Token saved:', jsonData.data.access_token);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"budi.santoso@gmail.com\",\n  \"password\": \"password123\",\n  \"role\": \"pasien\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/firebase/login",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "firebase", "login"]
+						}
+					}
+				},
+				{
+					"name": "Google Sign-In (Firebase / Google Token)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.success && jsonData.data && jsonData.data.access_token) {",
+									"    pm.collectionVariables.set('token', jsonData.data.access_token);",
+									"    console.log('Google Auth Token saved:', jsonData.data.access_token);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"id_token\": \"eyJhbGciOiJSUzI1NiIsImtpZCI6Ij...YOUR_GOOGLE_OR_FIREBASE_ID_TOKEN...\",\n  \"role\": \"pasien\",\n  \"nama\": \"Budi Santoso\",\n  \"no_hp\": \"081234567890\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/firebase/google",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "firebase", "google"]
+						}
+					}
+				},
+				{
+					"name": "Verify Firebase ID Token",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.success && jsonData.data && jsonData.data.access_token) {",
+									"    pm.collectionVariables.set('token', jsonData.data.access_token);",
+									"    console.log('Firebase Token saved:', jsonData.data.access_token);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"id_token\": \"eyJhbGciOiJSUzI1NiIs...FIREBASE_ID_TOKEN...\",\n  \"role\": \"pasien\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/firebase/verify-token",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "firebase", "verify-token"]
+						}
+					}
+				},
+				{
+					"name": "Firebase Forgot Password (Send Reset Email)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"budi.santoso@gmail.com\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/firebase/forgot-password",
+							"host": ["{{base_url}}"],
+							"path": ["auth", "firebase", "forgot-password"]
+						}
+					}
+				},
+				{
 					"name": "Get Current Session (Me)",
 					"request": {
 						"method": "GET",
