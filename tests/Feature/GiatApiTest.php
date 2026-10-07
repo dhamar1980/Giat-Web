@@ -96,11 +96,19 @@ class GiatApiTest extends TestCase
      */
     public function test_pasien_endpoints(): void
     {
-        $pasien = Pasien::first() ?? Pasien::create([
-            'nama' => 'Pasien Testing',
-            'email' => 'pasien.dummy@giat.id',
-            'password' => bcrypt('password123'),
-        ]);
+        $pasien = Pasien::first();
+        if (! $pasien) {
+            $user = \App\Models\User::create([
+                'id' => (string) \Illuminate\Support\Str::uuid(),
+                'email' => 'pasien.dummy@giat.id',
+                'password' => bcrypt('password123'),
+                'role' => 'pasien',
+            ]);
+            $pasien = Pasien::create([
+                'id_pasien' => $user->id,
+                'nama' => 'Pasien Testing',
+            ]);
+        }
 
         Sanctum::actingAs($pasien);
 

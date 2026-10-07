@@ -130,7 +130,7 @@ class FirebaseAuthTest extends TestCase
                 ],
             ]);
 
-        $this->assertDatabaseHas('pasien', [
+        $this->assertDatabaseHas('user', [
             'email' => $email,
             'firebase_uid' => $firebaseUid,
             'auth_provider' => 'firebase',
@@ -182,7 +182,7 @@ class FirebaseAuthTest extends TestCase
                 ],
             ]);
 
-        $this->assertDatabaseHas('pasien', [
+        $this->assertDatabaseHas('user', [
             'email' => $googleEmail,
             'firebase_uid' => $googleUid,
             'auth_provider' => 'google',
@@ -197,13 +197,19 @@ class FirebaseAuthTest extends TestCase
         $email = 'fb.login.' . time() . '@gmail.com';
         $firebaseUid = 'fb_uid_' . md5($email);
 
-        // Pre-create patient
-        $pasien = Pasien::create([
-            'nama' => 'Pasien Login Test',
+        // Pre-create user and patient profile
+        $user = \App\Models\User::create([
+            'id' => (string) \Illuminate\Support\Str::uuid(),
             'email' => $email,
             'password' => bcrypt('password123'),
+            'role' => 'pasien',
             'firebase_uid' => $firebaseUid,
             'auth_provider' => 'firebase',
+        ]);
+
+        $pasien = Pasien::create([
+            'id_pasien' => $user->id,
+            'nama' => 'Pasien Login Test',
         ]);
 
         $mockFirebase = Mockery::mock(FirebaseService::class);

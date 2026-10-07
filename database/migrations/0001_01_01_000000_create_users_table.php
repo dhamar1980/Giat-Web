@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -11,15 +12,19 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('users', function (Blueprint $table) {
-            $table->id();
-            $table->string('name');
+        Schema::create('user', function (Blueprint $table) {
+            $table->char('id', 36)->primary();
             $table->string('email')->unique();
-            $table->timestamp('email_verified_at')->nullable();
-            $table->string('password');
+            $table->string('password')->nullable();
+            $table->string('role', 30)->default('pasien'); // enum: pasien, dokter, apotek, admin
+            $table->string('firebase_uid')->nullable()->unique();
+            $table->string('auth_provider', 30)->default('local'); // enum: local, google, firebase
             $table->rememberToken();
             $table->timestamps();
         });
+
+        // View users -> user for Laravel default conventions if needed
+        DB::statement('CREATE OR REPLACE VIEW "users" AS SELECT * FROM "user";');
 
         Schema::create('password_reset_tokens', function (Blueprint $table) {
             $table->string('email')->primary();
@@ -29,7 +34,7 @@ return new class extends Migration
 
         Schema::create('sessions', function (Blueprint $table) {
             $table->string('id')->primary();
-            $table->foreignId('user_id')->nullable()->index();
+            $table->string('user_id', 36)->nullable()->index();
             $table->string('ip_address', 45)->nullable();
             $table->text('user_agent')->nullable();
             $table->longText('payload');
@@ -42,7 +47,8 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('users');
+        DB::statement('DROP VIEW IF EXISTS "users";');
+        Schema::dropIfExists('user');
         Schema::dropIfExists('password_reset_tokens');
         Schema::dropIfExists('sessions');
     }

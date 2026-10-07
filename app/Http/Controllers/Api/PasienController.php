@@ -48,7 +48,7 @@ class PasienController extends Controller
             return $this->errorResponse('Akses ditolak. Endpoint ini khusus untuk akun Pasien.', 403);
         }
 
-        $edukasi = EdukasiKesehatan::orderBy('tanggal_publish', 'desc')->take(10)->get();
+        $edukasi = EdukasiKesehatan::orderBy('created_at', 'desc')->take(10)->get();
         $latestPantau = Pantau::where('id_pasien', $pasien->id_pasien)->latest()->first();
         $latestPragi = Pragi::where('id_pasien', $pasien->id_pasien)->latest()->first();
         $activeReminders = Reminder::where('id_pasien', $pasien->id_pasien)->where('is_active', true)->take(3)->get();
@@ -82,11 +82,11 @@ class PasienController extends Controller
         if ($request->has('search')) {
             $query->where(function ($q) use ($request) {
                 $q->where('judul', 'like', '%' . $request->search . '%')
-                  ->orWhere('isi_edukasi', 'like', '%' . $request->search . '%');
+                  ->orWhere('konten', 'like', '%' . $request->search . '%');
             });
         }
 
-        $edukasi = $query->orderBy('tanggal_publish', 'desc')->paginate(10);
+        $edukasi = $query->orderBy('created_at', 'desc')->paginate(10);
 
         return $this->successResponse($edukasi, 'Daftar edukasi kesehatan ginjal');
     }
@@ -159,7 +159,7 @@ class PasienController extends Controller
     public function updateReminder(Request $request, int|string $id): JsonResponse
     {
         $pasien = $this->getAuthenticatedPasien($request);
-        $reminder = Reminder::where('id_reminder', $id)
+        $reminder = Reminder::where('id', $id)
             ->when($pasien, fn($q) => $q->where('id_pasien', $pasien->id_pasien))
             ->first();
 
@@ -191,7 +191,7 @@ class PasienController extends Controller
     public function toggleReminder(Request $request, int|string $id): JsonResponse
     {
         $pasien = $this->getAuthenticatedPasien($request);
-        $reminder = Reminder::where('id_reminder', $id)
+        $reminder = Reminder::where('id', $id)
             ->when($pasien, fn($q) => $q->where('id_pasien', $pasien->id_pasien))
             ->first();
 
@@ -210,7 +210,7 @@ class PasienController extends Controller
     public function deleteReminder(Request $request, int|string $id): JsonResponse
     {
         $pasien = $this->getAuthenticatedPasien($request);
-        $reminder = Reminder::where('id_reminder', $id)
+        $reminder = Reminder::where('id', $id)
             ->when($pasien, fn($q) => $q->where('id_pasien', $pasien->id_pasien))
             ->first();
 
@@ -661,17 +661,15 @@ class PasienController extends Controller
     {
         $query = Obat::query();
 
-        if ($request->has('tipe')) {
-            $query->where('tipe_obat', $request->tipe);
-        } else {
-            $query->whereIn('tipe_obat', ['bebas', 'bebas_terbatas']);
+        if ($request->has('kategori')) {
+            $query->where('kategori', 'like', '%' . $request->kategori . '%');
         }
 
         if ($request->has('search')) {
             $query->where('nama_obat', 'like', '%' . $request->search . '%');
         }
 
-        $obat = $query->with('stockObat.apotek')->get();
+        $obat = $query->with('apotek')->get();
 
         return $this->successResponse($obat, 'Daftar obat umum (bebas dan bebas terbatas)');
     }
@@ -960,9 +958,7 @@ class PasienController extends Controller
         }
 
         $notifikasi = Notifikasi::where(function ($q) use ($pasien) {
-            $q->where('id_user', $pasien->id_pasien)->where('role', 'pasien');
-        })->orWhere(function ($q) {
-            $q->whereNull('id_user')->whereIn('role', ['pasien', 'all']);
+            $q->where('id_user', $pasien->id_pasien)->orWhereNull('id_user');
         })
         ->orderBy('created_at', 'desc')
         ->paginate(15);

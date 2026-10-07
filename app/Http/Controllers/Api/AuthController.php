@@ -33,7 +33,7 @@ class AuthController extends Controller
         return match (strtolower((string) $role)) {
             'dokter' => [Dokter::class, 'dokter', 'id_dokter'],
             'apotek' => [Apotek::class, 'apotek', 'id_apotek'],
-            'user' => [User::class, 'users', 'id'],
+            'user' => [User::class, 'user', 'id'],
             default => [Pasien::class, 'pasien', 'id_pasien'],
         };
     }
@@ -43,33 +43,32 @@ class AuthController extends Controller
      */
     protected function findUserByEmail(string $email, ?string $role = null): ?array
     {
-        if ($role) {
-            [$modelClass, , $pk] = $this->getModelAndTableByRole($role);
-            $user = $modelClass::where('email', $email)->first();
-            return $user ? ['user' => $user, 'role' => strtolower($role), 'pk' => $pk] : null;
+        $query = User::where('email', $email);
+        if ($role && in_array(strtolower($role), ['pasien', 'dokter', 'apotek'])) {
+            $query->where('role', strtolower($role));
         }
 
-        // Try Pasien first
-        if ($user = Pasien::where('email', $email)->first()) {
-            return ['user' => $user, 'role' => 'pasien', 'pk' => 'id_pasien'];
+        $userRecord = $query->first();
+        if (! $userRecord) {
+            return null;
         }
 
-        // Try Dokter
-        if ($user = Dokter::where('email', $email)->first()) {
-            return ['user' => $user, 'role' => 'dokter', 'pk' => 'id_dokter'];
-        }
+        $roleName = strtolower($userRecord->role);
+        $profile = match ($roleName) {
+            'dokter' => Dokter::where('id_dokter', $userRecord->id)->first(),
+            'apotek' => Apotek::where('id_apotek', $userRecord->id)->first(),
+            default => Pasien::where('id_pasien', $userRecord->id)->first(),
+        };
 
-        // Try Apotek
-        if ($user = Apotek::where('email', $email)->first()) {
-            return ['user' => $user, 'role' => 'apotek', 'pk' => 'id_apotek'];
-        }
+        $model = $profile ?? $userRecord;
+        $model->password = $userRecord->password;
 
-        // Try Default User
-        if ($user = User::where('email', $email)->first()) {
-            return ['user' => $user, 'role' => 'user', 'pk' => 'id'];
-        }
-
-        return null;
+        return [
+            'user' => $model,
+            'role' => $roleName,
+            'pk' => $model->getKeyName(),
+            'user_record' => $userRecord,
+        ];
     }
 
     /**
@@ -77,29 +76,32 @@ class AuthController extends Controller
      */
     protected function findUserByFirebaseUid(string $uid, ?string $role = null): ?array
     {
-        if ($role) {
-            [$modelClass, , $pk] = $this->getModelAndTableByRole($role);
-            $user = $modelClass::where('firebase_uid', $uid)->first();
-            return $user ? ['user' => $user, 'role' => strtolower($role), 'pk' => $pk] : null;
+        $query = User::where('firebase_uid', $uid);
+        if ($role && in_array(strtolower($role), ['pasien', 'dokter', 'apotek'])) {
+            $query->where('role', strtolower($role));
         }
 
-        if ($user = Pasien::where('firebase_uid', $uid)->first()) {
-            return ['user' => $user, 'role' => 'pasien', 'pk' => 'id_pasien'];
+        $userRecord = $query->first();
+        if (! $userRecord) {
+            return null;
         }
 
-        if ($user = Dokter::where('firebase_uid', $uid)->first()) {
-            return ['user' => $user, 'role' => 'dokter', 'pk' => 'id_dokter'];
-        }
+        $roleName = strtolower($userRecord->role);
+        $profile = match ($roleName) {
+            'dokter' => Dokter::where('id_dokter', $userRecord->id)->first(),
+            'apotek' => Apotek::where('id_apotek', $userRecord->id)->first(),
+            default => Pasien::where('id_pasien', $userRecord->id)->first(),
+        };
 
-        if ($user = Apotek::where('firebase_uid', $uid)->first()) {
-            return ['user' => $user, 'role' => 'apotek', 'pk' => 'id_apotek'];
-        }
+        $model = $profile ?? $userRecord;
+        $model->password = $userRecord->password;
 
-        if ($user = User::where('firebase_uid', $uid)->first()) {
-            return ['user' => $user, 'role' => 'user', 'pk' => 'id'];
-        }
-
-        return null;
+        return [
+            'user' => $model,
+            'role' => $roleName,
+            'pk' => $model->getKeyName(),
+            'user_record' => $userRecord,
+        ];
     }
 
     /**
@@ -123,7 +125,7 @@ class AuthController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'nama' => 'required|string|max:255',
-            'email' => 'required|string|email|max:255|unique:pasien,email',
+            'email' => 'required|string|email|max:255|unique:user,email',
             'password' => 'required|string|min:8|confirmed',
             'no_hp' => 'nullable|string|max:20',
             'alamat' => 'nullable|string',
@@ -139,18 +141,36 @@ class AuthController extends Controller
         }
 
         $data = $validator->validated();
-        $data['password'] = Hash::make($data['password']);
+        $password = Hash::make($data['password']);
 
-        $pasien = Pasien::create($data);
+        $user = User::create([
+            'id' => (string) \Illuminate\Support\Str::uuid(),
+            'email' => $data['email'],
+            'password' => $password,
+            'role' => 'pasien',
+            'auth_provider' => 'local',
+        ]);
+
+        $pasien = Pasien::create([
+            'id_pasien' => $user->id,
+            'nama' => $data['nama'],
+            'no_hp' => $data['no_hp'] ?? null,
+            'alamat' => $data['alamat'] ?? null,
+            'jenis_kelamin' => $data['jenis_kelamin'] ?? null,
+            'nik' => $data['NIK'] ?? $data['nik'] ?? null,
+            'tanggal_lahir' => $data['tanggal_lahir'] ?? null,
+            'golongan_darah' => $data['gol_darah'] ?? $data['golongan_darah'] ?? null,
+            'foto_profile' => $data['foto_profile'] ?? null,
+        ]);
+
         $token = $pasien->createToken('auth_token')->plainTextToken;
 
         // Buat notifikasi sambutan untuk pasien baru
         Notifikasi::create([
-            'id_user' => $pasien->id_pasien,
-            'role' => 'pasien',
+            'id_user' => $user->id,
+            'kategori' => 'sistem',
             'judul' => 'Selamat Datang di GIAT!',
             'pesan' => 'Halo ' . $pasien->nama . ', akun Anda berhasil didaftarkan. Jaga kesehatan ginjal Anda bersama GIAT.',
-            'tipe' => 'umum',
         ]);
 
         return $this->successResponse([
@@ -168,7 +188,7 @@ class AuthController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'nama' => 'required|string|max:255',
-            'email' => 'required|string|email|max:255|unique:dokter,email',
+            'email' => 'required|string|email|max:255|unique:user,email',
             'password' => 'required|string|min:8|confirmed',
             'no_hp' => 'nullable|string|max:20',
             'no_sip' => 'nullable|string|max:100',
@@ -185,18 +205,36 @@ class AuthController extends Controller
         }
 
         $data = $validator->validated();
-        $data['password'] = Hash::make($data['password']);
+        $password = Hash::make($data['password']);
 
-        $dokter = Dokter::create($data);
+        $user = User::create([
+            'id' => (string) \Illuminate\Support\Str::uuid(),
+            'email' => $data['email'],
+            'password' => $password,
+            'role' => 'dokter',
+            'auth_provider' => 'local',
+        ]);
+
+        $dokter = Dokter::create([
+            'id_dokter' => $user->id,
+            'nama' => $data['nama'],
+            'spesialisasi' => $data['spesialisasi'],
+            'institusi' => $data['institusi'] ?? null,
+            'no_str' => $data['no_str'] ?? null,
+            'no_sip' => $data['no_sip'] ?? null,
+            'no_hp' => $data['no_hp'] ?? null,
+            'tarif_konsultasi' => 50000,
+            'foto_profile' => $data['foto_profil'] ?? $data['foto_profile'] ?? null,
+        ]);
+
         $token = $dokter->createToken('auth_token')->plainTextToken;
 
         // Buat notifikasi sambutan dokter
         Notifikasi::create([
-            'id_user' => $dokter->id_dokter,
-            'role' => 'dokter',
+            'id_user' => $user->id,
+            'kategori' => 'sistem',
             'judul' => 'Selamat Datang di GIAT Partner!',
             'pesan' => 'Halo ' . $dokter->nama . ', akun dokter Anda telah aktif. Anda siap melayani konsultasi pasien.',
-            'tipe' => 'umum',
         ]);
 
         return $this->successResponse([
@@ -214,7 +252,7 @@ class AuthController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'nama' => 'required|string|max:255',
-            'email' => 'required|string|email|max:255|unique:apotek,email',
+            'email' => 'required|string|email|max:255|unique:user,email',
             'password' => 'required|string|min:8|confirmed',
             'no_sip' => 'nullable|string|max:100',
             'jam_operasional' => 'nullable|string|max:100',
@@ -227,18 +265,32 @@ class AuthController extends Controller
         }
 
         $data = $validator->validated();
-        $data['password'] = Hash::make($data['password']);
+        $password = Hash::make($data['password']);
 
-        $apotek = Apotek::create($data);
+        $user = User::create([
+            'id' => (string) \Illuminate\Support\Str::uuid(),
+            'email' => $data['email'],
+            'password' => $password,
+            'role' => 'apotek',
+            'auth_provider' => 'local',
+        ]);
+
+        $apotek = Apotek::create([
+            'id_apotek' => $user->id,
+            'nama_apotek' => $data['nama'],
+            'penanggung_jawab' => $data['penanggung_jawab'] ?? $data['nama'],
+            'no_sipa_sia' => $data['no_sip'] ?? null,
+            'lokasi_lat_long' => $data['lokasi_apotek'] ?? null,
+        ]);
+
         $token = $apotek->createToken('auth_token')->plainTextToken;
 
         // Buat notifikasi sambutan apotek
         Notifikasi::create([
-            'id_user' => $apotek->id_apotek,
-            'role' => 'apotek',
+            'id_user' => $user->id,
+            'kategori' => 'sistem',
             'judul' => 'Selamat Datang di GIAT Pharmacy Network!',
-            'pesan' => 'Halo ' . $apotek->nama . ', akun apotek Anda telah aktif.',
-            'tipe' => 'umum',
+            'pesan' => 'Halo ' . $apotek->nama_apotek . ', akun apotek Anda telah aktif.',
         ]);
 
         return $this->successResponse([
@@ -575,8 +627,7 @@ class AuthController extends Controller
             return $this->errorResponse('Validasi registrasi Firebase gagal', 422, $validator->errors());
         }
 
-        [$modelClass, , $pk] = $this->getModelAndTableByRole($role);
-        if ($modelClass::where('email', $request->email)->exists()) {
+        if (User::where('email', $request->email)->exists()) {
             return $this->errorResponse("Email {$request->email} sudah terdaftar di sistem sebagai {$role}.", 422);
         }
 
@@ -592,25 +643,61 @@ class AuthController extends Controller
         }
 
         // 2. Simpan profil pengguna di database lokal
-        $data = $validator->validated();
-        $data['password'] = Hash::make($request->password);
-        $data['firebase_uid'] = $fbResult['firebase_uid'];
-        $data['auth_provider'] = 'firebase';
+        $userId = (string) \Illuminate\Support\Str::uuid();
+        $user = User::create([
+            'id' => $userId,
+            'email' => $request->email,
+            'password' => Hash::make($request->password),
+            'role' => $role,
+            'firebase_uid' => $fbResult['firebase_uid'],
+            'auth_provider' => 'firebase',
+        ]);
 
-        $user = $modelClass::create($data);
-        $token = $user->createToken('auth_token')->plainTextToken;
+        $profile = match ($role) {
+            'dokter' => Dokter::create([
+                'id_dokter' => $userId,
+                'nama' => $request->nama,
+                'spesialisasi' => $request->spesialisasi ?? 'Dokter Umum',
+                'institusi' => $request->institusi ?? null,
+                'no_sip' => $request->no_sip ?? null,
+                'no_str' => $request->no_str ?? null,
+                'no_hp' => $request->no_hp ?? null,
+                'tarif_konsultasi' => 50000,
+                'foto_profile' => $request->foto_profil ?? $request->foto_profile ?? null,
+            ]),
+            'apotek' => Apotek::create([
+                'id_apotek' => $userId,
+                'nama_apotek' => $request->nama,
+                'penanggung_jawab' => $request->penanggung_jawab ?? $request->nama,
+                'no_sipa_sia' => $request->no_sip ?? null,
+                'no_hp' => $request->no_hp ?? null,
+                'lokasi_lat_long' => $request->lokasi_apotek ?? null,
+            ]),
+            default => Pasien::create([
+                'id_pasien' => $userId,
+                'nama' => $request->nama,
+                'no_hp' => $request->no_hp ?? null,
+                'alamat' => $request->alamat ?? null,
+                'jenis_kelamin' => $request->jenis_kelamin ?? null,
+                'nik' => $request->NIK ?? $request->nik ?? null,
+                'tanggal_lahir' => $request->tanggal_lahir ?? null,
+                'golongan_darah' => $request->gol_darah ?? $request->golongan_darah ?? null,
+                'foto_profile' => $request->foto_profile ?? null,
+            ]),
+        };
+
+        $token = $profile->createToken('auth_token')->plainTextToken;
 
         // 3. Notifikasi sambutan
         Notifikasi::create([
-            'id_user' => $user->{$pk},
-            'role' => $role,
+            'id_user' => $userId,
+            'kategori' => 'sistem',
             'judul' => 'Selamat Datang di GIAT!',
-            'pesan' => 'Halo ' . $user->nama . ', akun Anda berhasil didaftarkan via Firebase. Jaga kesehatan ginjal Anda bersama GIAT.',
-            'tipe' => 'umum',
+            'pesan' => 'Halo ' . $request->nama . ', akun Anda berhasil didaftarkan via Firebase. Jaga kesehatan ginjal Anda bersama GIAT.',
         ]);
 
         return $this->successResponse([
-            'user' => $user,
+            'user' => $profile,
             'role' => $role,
             'access_token' => $token,
             'token_type' => 'Bearer',
@@ -637,10 +724,8 @@ class AuthController extends Controller
         try {
             $fbResult = $this->firebaseService->signInWithEmailPassword($request->email, $request->password);
         } catch (\Throwable $e) {
-            // SINKRONISASI OTOMATIS: Jika user dummy/lokal ada di database & password cocok,
-            // daftarkan secara instan ke Firebase Auth agar bisa langsung login.
             $localUserMeta = $this->findUserByEmail($request->email, $request->role);
-            if ($localUserMeta && Hash::check($request->password, $localUserMeta['user']->password)) {
+            if ($localUserMeta && Hash::check($request->password, $localUserMeta['user_record']->password)) {
                 try {
                     $fbResult = $this->firebaseService->signUpWithEmailPassword(
                         $request->email,
@@ -659,26 +744,42 @@ class AuthController extends Controller
         $userMeta = $this->findUserByFirebaseUid($fbResult['firebase_uid'], $request->role)
             ?? $this->findUserByEmail($request->email, $request->role);
 
-        $role = $request->role ? strtolower($request->role) : ($userMeta['role'] ?? 'pasien');
+        $role = $userMeta ? $userMeta['role'] : ($request->role ? strtolower($request->role) : 'pasien');
 
         if (! $userMeta) {
-            [$modelClass] = $this->getModelAndTableByRole($role);
-            $user = $modelClass::create([
-                'nama' => $fbResult['display_name'] ?? explode('@', $request->email)[0],
+            $userId = (string) \Illuminate\Support\Str::uuid();
+            $userRecord = User::create([
+                'id' => $userId,
                 'email' => $request->email,
                 'password' => Hash::make($request->password),
+                'role' => $role,
                 'firebase_uid' => $fbResult['firebase_uid'],
                 'auth_provider' => 'firebase',
             ]);
+
+            $user = match ($role) {
+                'dokter' => Dokter::create([
+                    'id_dokter' => $userId,
+                    'nama' => $fbResult['display_name'] ?? explode('@', $request->email)[0],
+                    'spesialisasi' => 'Dokter Umum',
+                ]),
+                'apotek' => Apotek::create([
+                    'id_apotek' => $userId,
+                    'nama_apotek' => $fbResult['display_name'] ?? explode('@', $request->email)[0],
+                ]),
+                default => Pasien::create([
+                    'id_pasien' => $userId,
+                    'nama' => $fbResult['display_name'] ?? explode('@', $request->email)[0],
+                ]),
+            };
         } else {
             $user = $userMeta['user'];
             $role = $userMeta['role'];
-            $user->firebase_uid = $fbResult['firebase_uid'];
-            $user->password = Hash::make($request->password);
-            if (empty($user->auth_provider) || $user->auth_provider === 'local') {
-                $user->auth_provider = 'firebase';
-            }
-            $user->save();
+            $userMeta['user_record']->update([
+                'firebase_uid' => $fbResult['firebase_uid'],
+                'password' => Hash::make($request->password),
+                'auth_provider' => 'firebase',
+            ]);
         }
 
         $token = $user->createToken('auth_token')->plainTextToken;
@@ -745,52 +846,52 @@ class AuthController extends Controller
         $isNewUser = false;
 
         if (! $userMeta) {
-            [$modelClass, , $pk] = $this->getModelAndTableByRole($role);
+            $userId = (string) \Illuminate\Support\Str::uuid();
             $nama = $request->input('nama') ?: ($googleData['display_name'] ?? explode('@', $email)[0]);
 
-            $createData = [
-                'nama' => $nama,
+            $userRecord = User::create([
+                'id' => $userId,
                 'email' => $email,
+                'role' => $role,
                 'firebase_uid' => $firebaseUid,
                 'auth_provider' => 'google',
-                'no_hp' => $request->input('no_hp'),
-            ];
+            ]);
 
-            if ($role === 'dokter') {
-                $createData['foto_profil'] = $googleData['photo_url'] ?? null;
-                $createData['spesialisasi'] = 'Dokter Umum';
-            } else {
-                $createData['foto_profile'] = $googleData['photo_url'] ?? null;
-            }
+            $user = match ($role) {
+                'dokter' => Dokter::create([
+                    'id_dokter' => $userId,
+                    'nama' => $nama,
+                    'spesialisasi' => 'Dokter Umum',
+                    'foto_profile' => $googleData['photo_url'] ?? null,
+                ]),
+                'apotek' => Apotek::create([
+                    'id_apotek' => $userId,
+                    'nama_apotek' => $nama,
+                ]),
+                default => Pasien::create([
+                    'id_pasien' => $userId,
+                    'nama' => $nama,
+                    'no_hp' => $request->input('no_hp'),
+                    'foto_profile' => $googleData['photo_url'] ?? null,
+                ]),
+            };
 
-            $user = $modelClass::create($createData);
             $isNewUser = true;
 
             Notifikasi::create([
-                'id_user' => $user->{$pk},
-                'role' => $role,
+                'id_user' => $userId,
+                'kategori' => 'sistem',
                 'judul' => 'Selamat Datang di GIAT!',
-                'pesan' => 'Halo ' . $user->nama . ', akun Anda berhasil terhubung menggunakan Google. Jaga kesehatan ginjal Anda bersama GIAT.',
-                'tipe' => 'umum',
+                'pesan' => 'Halo ' . $nama . ', akun Anda berhasil terhubung menggunakan Google. Jaga kesehatan ginjal Anda bersama GIAT.',
             ]);
         } else {
             $user = $userMeta['user'];
             $role = $userMeta['role'];
 
-            if (!empty($firebaseUid)) {
-                $user->firebase_uid = $firebaseUid;
-            }
-            $user->auth_provider = 'google';
-
-            if (!empty($googleData['photo_url'])) {
-                if ($role === 'dokter' && empty($user->foto_profil)) {
-                    $user->foto_profil = $googleData['photo_url'];
-                } elseif (empty($user->foto_profile)) {
-                    $user->foto_profile = $googleData['photo_url'];
-                }
-            }
-
-            $user->save();
+            $userMeta['user_record']->update([
+                'firebase_uid' => $firebaseUid ?? $userMeta['user_record']->firebase_uid,
+                'auth_provider' => 'google',
+            ]);
         }
 
         $token = $user->createToken('auth_token')->plainTextToken;

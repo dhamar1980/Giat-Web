@@ -56,13 +56,13 @@ class ApotekController extends Controller
             ->count();
 
         $totalResep = Pembelian::where('id_apotek', $apotek->id_apotek)
-            ->where('tipe_pembelian', 'resep')
+            ->where('tipe_pesanan', 'resep')
             ->count();
 
         $totalStockItem = StockObat::where('id_apoteker', $apotek->id_apotek)->count();
         $stockMenipis = StockObat::where('id_apoteker', $apotek->id_apotek)
             ->where('jumlah_stock', '<=', 10)
-            ->with('obat:id_obat,nama_obat,kategori,harga')
+            ->with('obat:id_obat,nama_obat,kategori,harga_jual')
             ->get();
 
         return $this->successResponse([
@@ -96,9 +96,7 @@ class ApotekController extends Controller
         }
 
         $notifikasi = Notifikasi::where(function ($q) use ($apotek) {
-            $q->where('id_user', $apotek->id_apotek)->where('role', 'apotek');
-        })->orWhere(function ($q) {
-            $q->whereNull('id_user')->whereIn('role', ['apotek', 'all']);
+            $q->where('id_user', $apotek->id_apotek)->orWhereNull('id_user');
         })
         ->orderBy('created_at', 'desc')
         ->paginate(15);
@@ -115,7 +113,7 @@ class ApotekController extends Controller
      */
     public function getReminders(Request $request): JsonResponse
     {
-        $query = Reminder::with(['pasien:id_pasien,nama,no_hp,email']);
+        $query = Reminder::with(['pasien:id_pasien,nama,no_hp']);
 
         if ($request->filled('search')) {
             $search = $request->search;
@@ -152,20 +150,21 @@ class ApotekController extends Controller
             $q->where('id_apotek', $apotek->id_apotek)
               ->orWhereNull('id_apotek');
         })->with([
-            'pasien:id_pasien,nama,no_hp,email,alamat',
-            'obat:id_obat,nama_obat,kategori,tipe_obat,harga',
-            'resepObat.dokter:id_dokter,nama,spesialisasi',
+            'pasien:id_pasien,nama,no_hp,alamat',
+            'items',
+            'resep.dokter:id_dokter,nama,spesialisasi',
         ]);
 
         if ($request->filled('status_pesanan')) {
             $query->where('status_pesanan', $request->status_pesanan);
         }
 
-        if ($request->filled('tipe_pembelian')) {
-            $query->where('tipe_pembelian', $request->tipe_pembelian);
+        if ($request->filled('tipe_pembelian') || $request->filled('tipe_pesanan')) {
+            $tipe = $request->input('tipe_pesanan', $request->input('tipe_pembelian'));
+            $query->where('tipe_pesanan', $tipe);
         }
 
-        $pesanan = $query->orderBy('tanggal_pembelian', 'desc')->paginate(15);
+        $pesanan = $query->orderBy('created_at', 'desc')->paginate(15);
 
         return $this->successResponse($pesanan, 'Berhasil memuat daftar pesanan apotek');
     }
@@ -173,10 +172,10 @@ class ApotekController extends Controller
     public function getPesananDetail($id, Request $request): JsonResponse
     {
         $pesanan = Pembelian::with([
-            'pasien:id_pasien,nama,no_hp,email,alamat',
-            'obat',
-            'resepObat.dokter:id_dokter,nama,spesialisasi,no_str',
-            'apotek:id_apotek,nama,lokasi_apotek',
+            'pasien:id_pasien,nama,no_hp,alamat',
+            'items',
+            'resep.dokter:id_dokter,nama,spesialisasi,no_str',
+            'apotek:id_apotek,nama_apotek,lokasi_lat_long',
         ])->find($id);
 
         if (! $pesanan) {
@@ -404,13 +403,13 @@ class ApotekController extends Controller
         $pesananResep = Pembelian::where(function ($q) use ($apotek) {
             $q->where('id_apotek', $apotek->id_apotek)->orWhereNull('id_apotek');
         })
-        ->where('tipe_pembelian', 'resep')
+        ->where('tipe_pesanan', 'resep')
         ->with([
-            'pasien:id_pasien,nama,no_hp,email,alamat',
-            'obat:id_obat,nama_obat,kategori,tipe_obat,harga,dosis',
-            'resepObat.dokter:id_dokter,nama,spesialisasi,no_str',
+            'pasien:id_pasien,nama,no_hp,alamat',
+            'items',
+            'resep.dokter:id_dokter,nama,spesialisasi,no_str',
         ])
-        ->orderBy('tanggal_pembelian', 'desc')
+        ->orderBy('created_at', 'desc')
         ->paginate(15);
 
         return $this->successResponse($pesananResep, 'Berhasil memuat daftar pesanan resep dokter');
@@ -423,7 +422,7 @@ class ApotekController extends Controller
             return $this->errorResponse('Data apotek tidak ditemukan', 404);
         }
 
-        $pesanan = Pembelian::where('tipe_pembelian', 'resep')->with('resepObat.obat')->find($id);
+        $pesanan = Pembelian::where('tipe_pesanan', 'resep')->with('resep.items')->find($id);
         if (! $pesanan) {
             return $this->errorResponse('Pesanan resep tidak ditemukan', 404);
         }
@@ -837,7 +836,7 @@ class ApotekController extends Controller
         }
 
         $riwayatPesanan = Pembelian::where('id_apotek', $apotek->id_apotek)
-            ->with(['pasien:id_pasien,nama', 'obat:id_obat,nama_obat'])
+            ->with(['pasien:id_pasien,nama', 'items'])
             ->orderBy('updated_at', 'desc')
             ->take(20)
             ->get()
@@ -845,22 +844,23 @@ class ApotekController extends Controller
                 return [
                     'tipe' => 'pesanan',
                     'judul' => "Pesanan #{$p->id_pembelian} ({$p->status_pesanan})",
-                    'deskripsi' => "Pasien: " . ($p->pasien->nama ?? '-') . " - Obat: " . ($p->obat->nama_obat ?? '-') . " ({$p->tipe_pembelian})",
+                    'deskripsi' => "Pasien: " . ($p->pasien->nama ?? '-') . " - Items: " . ($p->items->first()?->nama_obat ?? '-') . " (" . ($p->tipe_pesanan ?? 'umum') . ")",
                     'status' => $p->status_pesanan,
                     'waktu' => $p->updated_at,
                 ];
             });
 
-        $riwayatResep = ResepObat::where('id_apoteker', $apotek->id_apotek)
-            ->with(['pasien:id_pasien,nama', 'obat:id_obat,nama_obat', 'dokter:id_dokter,nama'])
+        $riwayatResep = Pembelian::where('id_apotek', $apotek->id_apotek)
+            ->where('tipe_pesanan', 'resep')
+            ->with(['pasien:id_pasien,nama', 'resep.dokter:id_dokter,nama'])
             ->orderBy('updated_at', 'desc')
             ->take(10)
             ->get()
             ->map(function ($r) {
                 return [
                     'tipe' => 'resep',
-                    'judul' => "Validasi Resep Dokter #{$r->id_resep}",
-                    'deskripsi' => "Dokter: " . ($r->dokter->nama ?? '-') . " untuk Pasien: " . ($r->pasien->nama ?? '-') . " - Obat: " . ($r->obat->nama_obat ?? '-'),
+                    'judul' => "Validasi Resep Dokter #" . ($r->id_resep ?? $r->id_pembelian),
+                    'deskripsi' => "Dokter: " . ($r->resep?->dokter?->nama ?? '-') . " untuk Pasien: " . ($r->pasien?->nama ?? '-'),
                     'status' => 'disetujui',
                     'waktu' => $r->updated_at,
                 ];

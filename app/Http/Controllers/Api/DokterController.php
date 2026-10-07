@@ -11,6 +11,7 @@ use App\Models\Obat;
 use App\Models\Pantau;
 use App\Models\Pasien;
 use App\Models\Pragi;
+use App\Models\ResepItem;
 use App\Models\ResepObat;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -57,7 +58,7 @@ class DokterController extends Controller
             ->count('id_pasien');
 
         $totalKonsultasiSelesai = Konsultasi::where('id_dokter', $dokter->id_dokter)
-            ->where('status_konsultasi', 'selesai')
+            ->where('status', 'selesai')
             ->count();
 
         $resepTerbaru = ResepObat::where('id_dokter', $dokter->id_dokter)
@@ -95,9 +96,7 @@ class DokterController extends Controller
         }
 
         $notifikasi = Notifikasi::where(function ($q) use ($dokter) {
-            $q->where('id_user', $dokter->id_dokter)->where('role', 'dokter');
-        })->orWhere(function ($q) {
-            $q->whereNull('id_user')->whereIn('role', ['dokter', 'all']);
+            $q->where('id_user', $dokter->id_dokter)->orWhereNull('id_user');
         })
         ->orderBy('created_at', 'desc')
         ->paginate(15);
@@ -116,11 +115,11 @@ class DokterController extends Controller
         }
 
         $query = Konsultasi::where('id_dokter', $dokter->id_dokter)
-            ->with(['pasien:id_pasien,nama,email,no_hp,jenis_kelamin,foto_profile'])
+            ->with(['pasien:id_pasien,nama,no_hp,jenis_kelamin,foto_profile'])
             ->orderBy('tanggal_konsultasi', 'asc');
 
         if ($request->status) {
-            $query->where('status_konsultasi', $request->status);
+            $query->where('status', $request->status);
         }
 
         if ($request->filter === 'today') {
@@ -212,24 +211,30 @@ class DokterController extends Controller
         $resep = ResepObat::create([
             'id_dokter' => $dokter->id_dokter,
             'id_pasien' => $request->id_pasien,
-            'id_obat' => $request->id_obat,
-            'id_apoteker' => $request->id_apotek,
-            'dosis' => $request->dosis,
+            'id_konsultasi' => $request->id_konsultasi,
             'tanggal_resep' => Carbon::now()->toDateString(),
+            'catatan_dokter' => $request->dosis,
+            'status' => 'aktif',
         ]);
 
-        $obat = $resep->obat;
+        $obat = Obat::find($request->id_obat);
+        ResepItem::create([
+            'id_resep' => $resep->id,
+            'nama_obat' => $obat?->nama_obat ?? 'Obat Resep',
+            'dosis' => $request->dosis,
+            'aturan_pakai' => $request->dosis,
+            'jumlah' => 1,
+        ]);
 
         // Jika dibuat saat sesi konsultasi aktif, otomatis kirim pesan resep ke chat
         if ($request->id_konsultasi) {
             $konsultasi = Konsultasi::find($request->id_konsultasi);
             if ($konsultasi) {
+                $namaObat = $obat?->nama_obat ?? 'Obat';
                 KonsultasiPesan::create([
                     'id_konsultasi' => $konsultasi->id_konsultasi,
-                    'sender_type' => 'dokter',
-                    'sender_id' => $dokter->id_dokter,
-                    'pesan' => "📋 [RESEP ELEKTRONIK DOKTER]:\nObat: {$obat->nama_obat}\nDosis & Aturan Pakai: {$resep->dosis}\n(Resep telah dikirim ke menu Resep Pasien untuk ditebus di Apotek).",
-                    'tipe' => 'resep',
+                    'id_sender' => $dokter->id_dokter,
+                    'pesan' => "📋 [RESEP ELEKTRONIK DOKTER]:\nObat: {$namaObat}\nDosis & Aturan Pakai: {$request->dosis}\n(Resep telah dikirim ke menu Resep Pasien untuk ditebus di Apotek).",
                 ]);
             }
         }
@@ -262,7 +267,7 @@ class DokterController extends Controller
         }
 
         $resep = ResepObat::where('id_dokter', $dokter->id_dokter)
-            ->with(['pasien:id_pasien,nama,email,no_hp,foto_profile', 'obat', 'apotek:id_apotek,nama'])
+            ->with(['pasien:id_pasien,nama,no_hp,foto_profile', 'obat', 'apotek:id_apotek,nama_apotek'])
             ->orderBy('tanggal_resep', 'desc')
             ->paginate(15);
 

@@ -5,7 +5,9 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Dokter;
 use App\Models\Konsultasi;
+use App\Models\KonsultasiPembayaran;
 use App\Models\KonsultasiPesan;
+use App\Models\KonsultasiVideoSession;
 use App\Models\Notifikasi;
 use App\Models\Pasien;
 use Carbon\Carbon;
@@ -64,14 +66,11 @@ class KonsultasiController extends Controller
             $query->where(function ($q) use ($request) {
                 $q->where('nama', 'like', '%' . $request->search . '%')
                   ->orWhere('spesialisasi', 'like', '%' . $request->search . '%')
-                  ->orWhere('institusi', 'like', '%' . $request->search . '%');
+                  ->orWhere('instansi', 'like', '%' . $request->search . '%');
             });
         }
 
-        $dokters = $query->get([
-            'id_dokter', 'nama', 'email', 'spesialisasi', 'biaya_konsultasi', 
-            'institusi', 'alamat_praktik', 'foto_profil', 'no_sip', 'no_str'
-        ]);
+        $dokters = $query->with('user')->get();
 
         return $this->successResponse($dokters, 'Daftar dokter tersedia untuk konsultasi');
     }
@@ -88,7 +87,7 @@ class KonsultasiController extends Controller
         }
 
         $totalPasien = Konsultasi::where('id_dokter', $dokter->id_dokter)->distinct('id_pasien')->count('id_pasien');
-        $totalKonsultasi = Konsultasi::where('id_dokter', $dokter->id_dokter)->where('status_konsultasi', 'selesai')->count();
+        $totalKonsultasi = Konsultasi::where('id_dokter', $dokter->id_dokter)->where('status', 'selesai')->count();
 
         $detail = [
             'dokter' => $dokter,
@@ -136,11 +135,17 @@ class KonsultasiController extends Controller
             'id_pasien' => $pasien->id_pasien,
             'id_dokter' => $dokter->id_dokter,
             'tanggal_konsultasi' => Carbon::parse($request->tanggal_konsultasi),
-            'status_konsultasi' => 'menunggu_pembayaran',
-            'status_pembayaran' => 'menunggu_pembayaran',
-            'biaya' => $biaya,
-            'isi_konsultasi' => $request->isi_konsultasi,
-            'catatan_dokter' => null,
+            'status' => 'menunggu_pembayaran',
+            'keluhan_awal' => $request->isi_konsultasi,
+            'jenis_layanan' => 'chat',
+        ]);
+
+        KonsultasiPembayaran::create([
+            'id_konsultasi' => $konsultasi->id,
+            'no_invoice' => 'INV-' . strtoupper(Str::random(10)),
+            'jumlah_bayar' => $biaya,
+            'metode_pembayaran' => 'transfer_bank',
+            'status_bayar' => 'menunggu_pembayaran',
         ]);
 
         // Kirim notifikasi ke pasien
@@ -184,8 +189,8 @@ class KonsultasiController extends Controller
     public function getDetailKonsultasi(int|string $id): JsonResponse
     {
         $konsultasi = Konsultasi::with([
-            'pasien:id_pasien,nama,email,no_hp,jenis_kelamin,foto_profile',
-            'dokter:id_dokter,nama,spesialisasi,foto_profil,institusi,biaya_konsultasi',
+            'pasien:id_pasien,nama,no_hp,jenis_kelamin,foto_profile',
+            'dokter:id_dokter,nama,spesialisasi,foto_profile,instansi,tarif_konsultasi',
         ])->find($id);
 
         if (! $konsultasi) {
@@ -220,28 +225,41 @@ class KonsultasiController extends Controller
         $roomId = 'giat-meet-' . Str::uuid();
 
         $konsultasi->update([
-            'status_pembayaran' => 'lunas',
-            'status_konsultasi' => 'berlangsung',
-            'room_id' => $roomId,
-            'waktu_mulai' => Carbon::now(),
+            'status' => 'berlangsung',
+            'jam_mulai' => Carbon::now()->toTimeString(),
         ]);
+
+        KonsultasiPembayaran::updateOrCreate(
+            ['id_konsultasi' => $konsultasi->id],
+            [
+                'no_invoice' => 'INV-' . strtoupper(Str::random(10)),
+                'jumlah_bayar' => $konsultasi->biaya ?? 50000,
+                'metode_pembayaran' => $request->input('metode_pembayaran', 'qris'),
+                'status_bayar' => 'lunas',
+                'waktu_bayar' => Carbon::now(),
+            ]
+        );
+
+        KonsultasiVideoSession::updateOrCreate(
+            ['id_konsultasi' => $konsultasi->id],
+            [
+                'room_id' => $roomId,
+                'status_panggilan' => 'berlangsung',
+            ]
+        );
 
         // Simpan pesan awal pasien ke riwayat chat
         KonsultasiPesan::create([
-            'id_konsultasi' => $konsultasi->id_konsultasi,
-            'sender_type' => 'pasien',
-            'sender_id' => $konsultasi->id_pasien,
-            'pesan' => $konsultasi->isi_konsultasi ?? 'Halo dokter, saya ingin berkonsultasi mengenai kondisi ginjal saya.',
-            'tipe' => 'text',
+            'id_konsultasi' => $konsultasi->id,
+            'id_sender' => $konsultasi->id_pasien,
+            'pesan' => $konsultasi->keluhan_awal ?? 'Halo dokter, saya ingin berkonsultasi mengenai kondisi ginjal saya.',
         ]);
 
         // Simpan pesan sistem
         KonsultasiPesan::create([
-            'id_konsultasi' => $konsultasi->id_konsultasi,
-            'sender_type' => 'system',
-            'sender_id' => 0,
+            'id_konsultasi' => $konsultasi->id,
+            'id_sender' => $konsultasi->id_dokter,
             'pesan' => "Pembayaran berhasil dikonfirmasi. Sesi konsultasi telah aktif. Anda dapat berkonsultasi melalui chat dan Video Call bersama {$konsultasi->dokter->nama}.",
-            'tipe' => 'system',
         ]);
 
         // Notifikasi ke dokter
@@ -291,7 +309,7 @@ class KonsultasiController extends Controller
     {
         $konsultasi = Konsultasi::with([
             'pasien:id_pasien,nama,foto_profile',
-            'dokter:id_dokter,nama,spesialisasi,foto_profil'
+            'dokter:id_dokter,nama,spesialisasi,foto_profile'
         ])->find($id);
 
         if (! $konsultasi) {
@@ -306,7 +324,7 @@ class KonsultasiController extends Controller
 
         // Tandai pesan terbaca
         KonsultasiPesan::where('id_konsultasi', $id)
-            ->where('sender_type', '!=', $actor['type'])
+            ->where('id_sender', '!=', $actor['id'])
             ->where('is_read', false)
             ->update(['is_read' => true]);
 
@@ -367,11 +385,9 @@ class KonsultasiController extends Controller
 
         $pesan = KonsultasiPesan::create([
             'id_konsultasi' => $konsultasi->id_konsultasi,
-            'sender_type' => $actor['type'],
-            'sender_id' => $actor['id'],
+            'id_sender' => $actor['id'],
             'pesan' => $request->pesan,
-            'tipe' => $request->input('tipe', 'text'),
-            'attachment' => $request->attachment,
+            'attachment_url' => $request->attachment,
             'is_read' => false,
         ]);
 
@@ -397,7 +413,12 @@ class KonsultasiController extends Controller
         }
 
         if (! $konsultasi->room_id) {
-            $konsultasi->update(['room_id' => 'giat-meet-' . Str::uuid()]);
+            $roomId = 'giat-meet-' . Str::uuid();
+            KonsultasiVideoSession::updateOrCreate(
+                ['id_konsultasi' => $konsultasi->id],
+                ['room_id' => $roomId, 'status_panggilan' => 'berlangsung']
+            );
+            $konsultasi->load('videoSession');
         }
 
         $videoUrl = "https://meet.jit.si/{$konsultasi->room_id}";
@@ -406,10 +427,8 @@ class KonsultasiController extends Controller
         if ($request->input('notify_chat', false)) {
             KonsultasiPesan::create([
                 'id_konsultasi' => $konsultasi->id_konsultasi,
-                'sender_type' => $actor['type'],
-                'sender_id' => $actor['id'],
+                'id_sender' => $actor['id'],
                 'pesan' => "Panggilan video call dimulai. Klik tautan untuk bergabung: {$videoUrl}",
-                'tipe' => 'video_call',
             ]);
         }
 
@@ -431,20 +450,15 @@ class KonsultasiController extends Controller
             return $this->errorResponse('Konsultasi tidak ditemukan', 404);
         }
 
-        $catatanDokter = $request->input('catatan_dokter') ?? $konsultasi->catatan_dokter;
-
         $konsultasi->update([
-            'status_konsultasi' => 'selesai',
-            'waktu_selesai' => Carbon::now(),
-            'catatan_dokter' => $catatanDokter,
+            'status' => 'selesai',
+            'jam_selesai' => Carbon::now()->toTimeString(),
         ]);
 
         KonsultasiPesan::create([
             'id_konsultasi' => $konsultasi->id_konsultasi,
-            'sender_type' => 'system',
-            'sender_id' => 0,
+            'id_sender' => $konsultasi->id_dokter,
             'pesan' => "Sesi konsultasi telah selesai. Riwayat konsultasi ini sekarang bersifat hanya-baca (read-only).",
-            'tipe' => 'system',
         ]);
 
         return $this->successResponse($konsultasi, 'Sesi konsultasi telah selesai. Riwayat chat telah diarsipkan.');
@@ -463,7 +477,7 @@ class KonsultasiController extends Controller
         }
 
         $konsultasi = Konsultasi::where('id_pasien', $pasien->id_pasien)
-            ->with(['dokter:id_dokter,nama,spesialisasi,institusi,foto_profil'])
+            ->with(['dokter:id_dokter,nama,spesialisasi,institusi,foto_profile'])
             ->withCount('pesan')
             ->orderBy('tanggal_konsultasi', 'desc')
             ->get();
@@ -484,7 +498,7 @@ class KonsultasiController extends Controller
         }
 
         $konsultasi = Konsultasi::where('id_dokter', $dokter->id_dokter)
-            ->with(['pasien:id_pasien,nama,email,no_hp,jenis_kelamin,foto_profile'])
+            ->with(['pasien:id_pasien,nama,no_hp,jenis_kelamin,foto_profile'])
             ->withCount('pesan')
             ->orderBy('tanggal_konsultasi', 'desc')
             ->get();

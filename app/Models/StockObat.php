@@ -2,37 +2,53 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Builder;
 
-class StockObat extends Model
+class StockObat extends ObatBatch
 {
-    use HasFactory;
-
-    protected $table = 'stock_obat';
-    protected $primaryKey = 'id_stock';
-
-    protected $fillable = [
-        'id_obat',
-        'id_apoteker',
-        'jumlah_stock',
-    ];
-
-    protected function casts(): array
+    // Alias model for backward compatibility
+    public function newEloquentBuilder($query): Builder
     {
-        return [
-            'jumlah_stock' => 'integer',
-        ];
+        return new class($query) extends Builder {
+            public function where($column, $operator = null, $value = null, $boolean = 'and')
+            {
+                if (is_array($column)) {
+                    $remapped = [];
+                    foreach ($column as $key => $val) {
+                        $newKey = $key;
+                        if ($key === 'id_apoteker') {
+                            $newKey = 'id_apotek';
+                        } elseif ($key === 'jumlah_stock') {
+                            $newKey = 'stok_batch';
+                        }
+                        $remapped[$newKey] = $val;
+                    }
+                    return parent::where($remapped, $operator, $value, $boolean);
+                }
+
+                if ($column === 'id_apoteker') {
+                    $column = 'id_apotek';
+                } elseif ($column === 'jumlah_stock') {
+                    $column = 'stok_batch';
+                }
+                return parent::where($column, $operator, $value, $boolean);
+            }
+        };
     }
 
-    public function obat(): BelongsTo
+    public function decrement($column, $amount = 1, array $extra = [])
     {
-        return $this->belongsTo(Obat::class, 'id_obat', 'id_obat');
+        if ($column === 'jumlah_stock') {
+            $column = 'stok_batch';
+        }
+        return parent::decrement($column, $amount, $extra);
     }
 
-    public function apotek(): BelongsTo
+    public function increment($column, $amount = 1, array $extra = [])
     {
-        return $this->belongsTo(Apotek::class, 'id_apoteker', 'id_apotek');
+        if ($column === 'jumlah_stock') {
+            $column = 'stok_batch';
+        }
+        return parent::increment($column, $amount, $extra);
     }
 }
