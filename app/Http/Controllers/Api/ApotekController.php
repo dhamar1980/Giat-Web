@@ -535,9 +535,9 @@ class ApotekController extends Controller
             return $this->errorResponse('Data apotek tidak ditemukan', 404);
         }
 
-        $stocks = StockObat::where('id_apoteker', $apotek->id_apotek)
+        $stocks = StockObat::where('id_apotek', $apotek->id_apotek)
             ->with('obat')
-            ->orderBy('jumlah_stock', 'asc')
+            ->orderBy('stok_batch', 'asc')
             ->get();
 
         return $this->successResponse($stocks, 'Berhasil memuat data stok obat apotek');

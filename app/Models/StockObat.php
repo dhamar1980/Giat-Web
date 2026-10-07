@@ -33,6 +33,16 @@ class StockObat extends ObatBatch
                 }
                 return parent::where($column, $operator, $value, $boolean);
             }
+
+            public function orderBy($column, $direction = 'asc')
+            {
+                if ($column === 'id_apoteker') {
+                    $column = 'id_apotek';
+                } elseif ($column === 'jumlah_stock') {
+                    $column = 'stok_batch';
+                }
+                return parent::orderBy($column, $direction);
+            }
         };
     }
 
