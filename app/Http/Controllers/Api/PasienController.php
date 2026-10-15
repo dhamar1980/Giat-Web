@@ -9,12 +9,18 @@ use App\Models\Obat;
 use App\Models\Pantau;
 use App\Models\Pasien;
 use App\Models\Pembelian;
+use App\Models\PesananObatItem;
+use App\Models\PesananObatTracking;
 use App\Models\Pragi;
+use App\Models\PragiChat;
+use App\Models\PragiPertanyaan;
 use App\Models\Reminder;
 use App\Models\ResepObat;
+use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
@@ -102,6 +108,96 @@ class PasienController extends Controller
         }
 
         return $this->successResponse($edukasi, 'Detail edukasi kesehatan ginjal');
+    }
+
+    /**
+     * Get list of unique article categories.
+     */
+    public function getEdukasiKategori(): JsonResponse
+    {
+        $categories = EdukasiKesehatan::distinct()->pluck('kategori')->filter()->values();
+
+        if ($categories->isEmpty()) {
+            $categories = collect([
+                'Pencegahan Ginjal',
+                'Nutrisi & Diet Rendah Garam',
+                'Gaya Hidup & Hidrasi',
+                'Pengetahuan Hemodialisis',
+                'Informasi Obat Ginjal',
+            ]);
+        }
+
+        return $this->successResponse($categories, 'Daftar kategori artikel edukasi');
+    }
+
+    /**
+     * Create a new edukasi kesehatan article.
+     */
+    public function createEdukasi(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'judul' => 'required|string|max:255',
+            'kategori' => 'required|string|max:100',
+            'konten' => 'required|string',
+            'gambar_url' => 'nullable|string',
+            'penulis' => 'nullable|string|max:255',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->errorResponse('Validasi artikel gagal', 422, $validator->errors());
+        }
+
+        $data = $validator->validated();
+        if (empty($data['penulis'])) {
+            $user = $request->user();
+            $data['penulis'] = $user?->nama ?? 'Tim Medis GIAT';
+        }
+
+        $artikel = EdukasiKesehatan::create($data);
+
+        return $this->successResponse($artikel, 'Artikel edukasi berhasil ditambahkan', 201);
+    }
+
+    /**
+     * Update an existing edukasi kesehatan article.
+     */
+    public function updateEdukasi(Request $request, int|string $id): JsonResponse
+    {
+        $artikel = EdukasiKesehatan::find($id);
+        if (! $artikel) {
+            return $this->errorResponse('Artikel edukasi tidak ditemukan', 404);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'judul' => 'sometimes|required|string|max:255',
+            'kategori' => 'sometimes|required|string|max:100',
+            'konten' => 'sometimes|required|string',
+            'gambar_url' => 'nullable|string',
+            'penulis' => 'nullable|string|max:255',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->errorResponse('Validasi update artikel gagal', 422, $validator->errors());
+        }
+
+        $artikel->update($validator->validated());
+
+        return $this->successResponse($artikel, 'Artikel edukasi berhasil diperbarui');
+    }
+
+    /**
+     * Delete an edukasi kesehatan article.
+     */
+    public function deleteEdukasi(int|string $id): JsonResponse
+    {
+        $artikel = EdukasiKesehatan::find($id);
+        if (! $artikel) {
+            return $this->errorResponse('Artikel edukasi tidak ditemukan', 404);
+        }
+
+        $artikel->delete();
+
+        return $this->successResponse(null, 'Artikel edukasi berhasil dihapus');
     }
 
     // =========================================================================
@@ -221,6 +317,48 @@ class PasienController extends Controller
         $reminder->delete();
 
         return $this->successResponse(null, 'Reminder berhasil dihapus');
+    }
+
+    /**
+     * Get single reminder detail.
+     */
+    public function getReminderDetail(Request $request, int|string $id): JsonResponse
+    {
+        $pasien = $this->getAuthenticatedPasien($request);
+        $reminder = Reminder::where('id', $id)
+            ->when($pasien, fn($q) => $q->where('id_pasien', $pasien->id_pasien))
+            ->first();
+
+        if (! $reminder) {
+            return $this->errorResponse('Pengingat tidak ditemukan', 404);
+        }
+
+        return $this->successResponse($reminder, 'Detail pengingat minum obat');
+    }
+
+    /**
+     * Get reminders scheduled for today.
+     */
+    public function getTodayReminders(Request $request): JsonResponse
+    {
+        $pasien = $this->getAuthenticatedPasien($request);
+        if (! $pasien) {
+            return $this->errorResponse('Pasien tidak ditemukan', 404);
+        }
+
+        $today = Carbon::today()->toDateString();
+        $reminders = Reminder::where('id_pasien', $pasien->id_pasien)
+            ->where('is_active', true)
+            ->where(function ($q) use ($today) {
+                $q->whereDate('tanggal', $today)
+                  ->orWhere('pengulangan', 'harian')
+                  ->orWhere('pengulangan', 'Setiap Hari')
+                  ->orWhereNull('tanggal');
+            })
+            ->orderBy('waktu', 'asc')
+            ->get();
+
+        return $this->successResponse($reminders, 'Jadwal pengingat hari ini');
     }
 
     // =========================================================================
@@ -476,12 +614,136 @@ class PasienController extends Controller
         return $this->successResponse($summary, 'Ringkasan data pemantauan harian pasien');
     }
 
+    /**
+     * Get single pantau entry detail.
+     */
+    public function getPantauDetail(int|string $id): JsonResponse
+    {
+        $pantau = Pantau::find($id);
+        if (! $pantau) {
+            return $this->errorResponse('Catatan pantau tidak ditemukan', 404);
+        }
+
+        return $this->successResponse($pantau, 'Detail catatan pantau harian');
+    }
+
+    /**
+     * Update an existing pantau entry.
+     */
+    public function updatePantau(Request $request, int|string $id): JsonResponse
+    {
+        $pasien = $this->getAuthenticatedPasien($request);
+        $pantau = Pantau::where('id', $id)
+            ->when($pasien, fn($q) => $q->where('id_pasien', $pasien->id_pasien))
+            ->first();
+
+        if (! $pantau) {
+            return $this->errorResponse('Catatan pantau tidak ditemukan', 404);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'bb' => 'sometimes|required|numeric|min:20|max:300',
+            'tb' => 'sometimes|required|numeric|min:50|max:250',
+            'keluhan' => 'nullable|string|max:255',
+            'detail_keluhan' => 'nullable|string',
+            'kondisi' => 'nullable|string',
+            'catatan' => 'nullable|string',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->errorResponse('Validasi update pantau gagal', 422, $validator->errors());
+        }
+
+        $bb = $request->input('bb', $pantau->bb);
+        $tb = $request->input('tb', $pantau->tb);
+        $tbMeter = $tb / 100;
+        $imt = round($bb / ($tbMeter * $tbMeter), 2);
+
+        $kondisi = $request->kondisi;
+        if (! $kondisi) {
+            $kondisi = match (true) {
+                $imt < 18.5 => 'Berat Badan Kurang',
+                $imt <= 24.9 => 'Normal / Sehat',
+                $imt <= 29.9 => 'Berat Badan Berlebih',
+                default => 'Obesitas',
+            };
+        }
+
+        $pantau->update(array_merge($validator->validated(), [
+            'bb' => $bb,
+            'tb' => $tb,
+            'imt' => $imt,
+            'kondisi' => $kondisi,
+        ]));
+
+        return $this->successResponse($pantau, 'Catatan pantau berhasil diperbarui');
+    }
+
+    /**
+     * Delete a pantau entry.
+     */
+    public function deletePantau(Request $request, int|string $id): JsonResponse
+    {
+        $pasien = $this->getAuthenticatedPasien($request);
+        $pantau = Pantau::where('id', $id)
+            ->when($pasien, fn($q) => $q->where('id_pasien', $pasien->id_pasien))
+            ->first();
+
+        if (! $pantau) {
+            return $this->errorResponse('Catatan pantau tidak ditemukan', 404);
+        }
+
+        $pantau->delete();
+
+        return $this->successResponse(null, 'Catatan pantau berhasil dihapus');
+    }
+
+    /**
+     * Get chart-ready timeseries data of weight and BMI for mobile Flutter graphs.
+     */
+    public function getPantauChart(Request $request): JsonResponse
+    {
+        $pasien = $this->getAuthenticatedPasien($request);
+        if (! $pasien) {
+            return $this->errorResponse('Pasien tidak ditemukan', 404);
+        }
+
+        $limit = (int) $request->input('limit', 14);
+
+        $records = Pantau::where('id_pasien', $pasien->id_pasien)
+            ->orderBy('created_at', 'asc')
+            ->take($limit)
+            ->get();
+
+        $chartData = [
+            'labels' => $records->map(fn($r) => $r->created_at ? $r->created_at->format('d M') : '-'),
+            'berat_badan' => $records->map(fn($r) => (float) $r->bb),
+            'bmi' => $records->map(fn($r) => (float) $r->imt),
+            'kondisi' => $records->map(fn($r) => $r->kondisi ?? 'Normal'),
+            'records' => $records,
+        ];
+
+        return $this->successResponse($chartData, 'Data grafik pemantauan kesehatan');
+    }
+
     // =========================================================================
     // 5. PRAGI (Skrining Risiko CKD & Chatbot AI PRAGI)
     // =========================================================================
 
     public function getPragiQuestions(): JsonResponse
     {
+        $dbQuestions = PragiPertanyaan::where('is_active', true)
+            ->orderBy('urutan', 'asc')
+            ->get();
+
+        if ($dbQuestions->isNotEmpty()) {
+            return $this->successResponse([
+                'judul' => 'Kuesioner Skrining Risiko Penyakit Ginjal Kronis (PRAGI - GIAT)',
+                'total_pertanyaan' => $dbQuestions->count(),
+                'pertanyaan' => $dbQuestions,
+            ], 'Daftar pertanyaan skrining PRAGI');
+        }
+
         $questions = [
             ['id' => 1, 'pertanyaan' => 'Apakah Anda sering merasakan nyeri, rasa pegal, atau ngilu di area pinggang belakang?', 'bobot' => 2],
             ['id' => 2, 'pertanyaan' => 'Apakah Anda memiliki riwayat diabetes melitus (gula darah tinggi)?', 'bobot' => 2],
@@ -577,10 +839,23 @@ class PasienController extends Controller
 
         $history = Pragi::where('id_pasien', $pasien->id_pasien)
             ->orderBy('tanggal_screening', 'desc')
-            ->take(5)
+            ->take(10)
             ->get();
 
         return $this->successResponse($history, 'Riwayat skrining PRAGI pasien');
+    }
+
+    /**
+     * Get detail of a specific PRAGI screening result.
+     */
+    public function getPragiDetail(int|string $id): JsonResponse
+    {
+        $pragi = Pragi::find($id);
+        if (! $pragi) {
+            return $this->errorResponse('Data skrining PRAGI tidak ditemukan', 404);
+        }
+
+        return $this->successResponse($pragi, 'Detail hasil skrining PRAGI');
     }
 
     /**
@@ -643,6 +918,23 @@ class PasienController extends Controller
             $saranTindakan = ['Buka Menu Konsultasi', 'Buka Skrining PRAGI'];
         }
 
+        // Simpan pesan user dan bot ke tabel pragi_chats
+        if ($pasien) {
+            PragiChat::create([
+                'id_pasien' => $pasien->id_pasien,
+                'role_sender' => 'user',
+                'pesan' => $request->pesan,
+                'created_at' => Carbon::now(),
+            ]);
+
+            PragiChat::create([
+                'id_pasien' => $pasien->id_pasien,
+                'role_sender' => 'assistant',
+                'pesan' => $reply,
+                'created_at' => Carbon::now(),
+            ]);
+        }
+
         return $this->successResponse([
             'reply' => $reply,
             'topik' => $topik,
@@ -651,6 +943,39 @@ class PasienController extends Controller
             'disclaimer' => 'Informasi dari PRAGI bersifat edukatif dan tidak menggantikan diagnosis klinis dokter spesialis.',
             'waktu' => Carbon::now()->toIso8601String(),
         ], 'Respon asisten AI PRAGI');
+    }
+
+    /**
+     * Get chat conversation history with AI PRAGI.
+     */
+    public function getPragiChatHistory(Request $request): JsonResponse
+    {
+        $pasien = $this->getAuthenticatedPasien($request);
+        if (! $pasien) {
+            return $this->errorResponse('Pasien tidak ditemukan', 404);
+        }
+
+        $chats = PragiChat::where('id_pasien', $pasien->id_pasien)
+            ->orderBy('created_at', 'asc')
+            ->take(50)
+            ->get();
+
+        return $this->successResponse($chats, 'Riwayat percakapan dengan AI PRAGI');
+    }
+
+    /**
+     * Clear / reset chat history with AI PRAGI.
+     */
+    public function clearPragiChatHistory(Request $request): JsonResponse
+    {
+        $pasien = $this->getAuthenticatedPasien($request);
+        if (! $pasien) {
+            return $this->errorResponse('Pasien tidak ditemukan', 404);
+        }
+
+        PragiChat::where('id_pasien', $pasien->id_pasien)->delete();
+
+        return $this->successResponse(null, 'Riwayat percakapan AI PRAGI berhasil dibersihkan');
     }
 
     // =========================================================================
@@ -964,5 +1289,231 @@ class PasienController extends Controller
         ->paginate(15);
 
         return $this->successResponse($notifikasi, 'Daftar notifikasi pasien');
+    }
+
+    /**
+     * Multi-item checkout from cart (Pesanan Obat Bebas / Campuran).
+     */
+    public function checkoutObat(Request $request): JsonResponse
+    {
+        $pasien = $this->getAuthenticatedPasien($request);
+        if (! $pasien) {
+            return $this->errorResponse('Pasien tidak ditemukan', 404);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'id_apotek' => 'required|exists:apotek,id_apotek',
+            'items' => 'required|array|min:1',
+            'items.*.id_obat' => 'required|exists:obat,id_obat',
+            'items.*.jumlah' => 'required|integer|min:1',
+            'alamat_pengiriman' => 'required|string',
+            'metode_pembayaran' => 'nullable|string',
+            'catatan' => 'nullable|string',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->errorResponse('Validasi pesanan obat gagal', 422, $validator->errors());
+        }
+
+        DB::beginTransaction();
+        try {
+            $subtotal = 0;
+            $itemsData = [];
+
+            foreach ($request->items as $item) {
+                $obat = Obat::find($item['id_obat']);
+                $itemSubtotal = $obat->harga * $item['jumlah'];
+                $subtotal += $itemSubtotal;
+
+                $itemsData[] = [
+                    'id_obat' => $obat->id_obat,
+                    'nama_obat' => $obat->nama_obat,
+                    'jumlah' => $item['jumlah'],
+                    'harga_satuan' => $obat->harga,
+                    'subtotal' => $itemSubtotal,
+                ];
+            }
+
+            $ongkir = 10000;
+            $totalBayar = $subtotal + $ongkir;
+            $resi = 'GIAT-MED-' . strtoupper(Str::random(10));
+
+            $pesanan = Pembelian::create([
+                'id_pasien' => $pasien->id_pasien,
+                'id_apotek' => $request->id_apotek,
+                'tipe_pesanan' => 'umum',
+                'metode_pengambilan' => 'diantar',
+                'nama_penerima' => $pasien->nama,
+                'no_hp_penerima' => $pasien->no_hp ?? '-',
+                'alamat_pengiriman' => $request->alamat_pengiriman,
+                'subtotal' => $subtotal,
+                'ongkos_kirim' => $ongkir,
+                'total_bayar' => $totalBayar,
+                'metode_pembayaran' => $request->input('metode_pembayaran', 'qris'),
+                'status_pembayaran' => 'lunas',
+                'status_pesanan' => 'menunggu_konfirmasi',
+                'alasan_penolakan' => null,
+                'status_lacak' => [
+                    [
+                        'status' => 'Pesanan Dibuat',
+                        'deskripsi' => 'Pesanan multi-item obat berhasil dibuat oleh pasien.',
+                        'waktu' => Carbon::now()->toIso8601String(),
+                    ],
+                ],
+                'tanggal_pembelian' => Carbon::now(),
+            ]);
+
+            // Simpan detail items
+            foreach ($itemsData as $row) {
+                PesananObatItem::create([
+                    'id_pesanan' => $pesanan->id,
+                    'id_obat' => $row['id_obat'],
+                    'nama_obat' => $row['nama_obat'],
+                    'jumlah' => $row['jumlah'],
+                    'harga_satuan' => $row['harga_satuan'],
+                    'subtotal' => $row['subtotal'],
+                ]);
+            }
+
+            // Simpan tracking record
+            PesananObatTracking::create([
+                'id_pesanan' => $pesanan->id,
+                'status' => 'Pesanan Dibuat',
+                'keterangan' => 'Pesanan multi-item obat berhasil dibuat oleh pasien dan siap dikonfirmasi apotek.',
+            ]);
+
+            // Notifikasi ke Apotek
+            Notifikasi::create([
+                'id_user' => $request->id_apotek,
+                'role' => 'apotek',
+                'judul' => 'Pesanan Obat Multi-Item Masuk',
+                'pesan' => "Pesanan baru dari {$pasien->nama} senilai Rp " . number_format($totalBayar, 0, ',', '.') . " siap diproses.",
+                'tipe' => 'pesanan',
+                'data' => ['id_pembelian' => $pesanan->id],
+            ]);
+
+            DB::commit();
+
+            return $this->successResponse(
+                $pesanan->load(['items', 'apotek']),
+                'Checkout pesanan obat berhasil dibuat dan diteruskan ke apotek',
+                201
+            );
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return $this->errorResponse('Gagal melakukan checkout pesanan: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Cancel an order if still in 'menunggu_konfirmasi' status.
+     */
+    public function batalPesanan(Request $request, int|string $id): JsonResponse
+    {
+        $pasien = $this->getAuthenticatedPasien($request);
+        $pesanan = Pembelian::where('id', $id)
+            ->when($pasien, fn($q) => $q->where('id_pasien', $pasien->id_pasien))
+            ->first();
+
+        if (! $pesanan) {
+            return $this->errorResponse('Pesanan tidak ditemukan', 404);
+        }
+
+        if (! in_array($pesanan->status_pesanan, ['menunggu_konfirmasi', 'menunggu_pembayaran'])) {
+            return $this->errorResponse("Pesanan tidak dapat dibatalkan karena sudah dalam status {$pesanan->status_pesanan}", 400);
+        }
+
+        $alasan = $request->input('alasan', 'Dibatalkan oleh pasien');
+        $pesanan->status_pesanan = 'dibatalkan';
+        $pesanan->alasan_penolakan = $alasan;
+
+        $timeline = $pesanan->status_lacak ?? [];
+        $timeline[] = [
+            'status' => 'Pesanan Dibatalkan',
+            'deskripsi' => "Alasan: {$alasan}",
+            'waktu' => Carbon::now()->toIso8601String(),
+        ];
+        $pesanan->status_lacak = $timeline;
+        $pesanan->save();
+
+        PesananObatTracking::create([
+            'id_pesanan' => $pesanan->id,
+            'status' => 'Pesanan Dibatalkan',
+            'keterangan' => $alasan,
+        ]);
+
+        return $this->successResponse($pesanan, 'Pesanan berhasil dibatalkan');
+    }
+
+    /**
+     * Confirm order completion when received by patient.
+     */
+    public function konfirmasiTerimaPesanan(Request $request, int|string $id): JsonResponse
+    {
+        $pasien = $this->getAuthenticatedPasien($request);
+        $pesanan = Pembelian::where('id', $id)
+            ->when($pasien, fn($q) => $q->where('id_pasien', $pasien->id_pasien))
+            ->first();
+
+        if (! $pesanan) {
+            return $this->errorResponse('Pesanan tidak ditemukan', 404);
+        }
+
+        if ($pesanan->status_pesanan === 'selesai') {
+            return $this->successResponse($pesanan, 'Pesanan ini sudah berstatus selesai');
+        }
+
+        $pesanan->status_pesanan = 'selesai';
+        $pesanan->status_pembayaran = 'lunas';
+
+        $timeline = $pesanan->status_lacak ?? [];
+        $timeline[] = [
+            'status' => 'Pesanan Diterima & Selesai',
+            'deskripsi' => 'Paket obat telah diterima oleh pasien dengan baik.',
+            'waktu' => Carbon::now()->toIso8601String(),
+        ];
+        $pesanan->status_lacak = $timeline;
+        $pesanan->save();
+
+        PesananObatTracking::create([
+            'id_pesanan' => $pesanan->id,
+            'status' => 'Pesanan Selesai',
+            'keterangan' => 'Paket obat telah diterima oleh pasien dengan baik.',
+        ]);
+
+        // Notifikasi ke Apotek
+        if ($pesanan->id_apotek) {
+            Notifikasi::create([
+                'id_user' => $pesanan->id_apotek,
+                'role' => 'apotek',
+                'judul' => 'Pesanan Selesai',
+                'pesan' => "Pasien telah mengonfirmasi penerimaan pesanan #{$pesanan->id_pembelian}.",
+                'tipe' => 'pesanan',
+                'data' => ['id_pembelian' => $pesanan->id_pembelian],
+            ]);
+        }
+
+        return $this->successResponse($pesanan, 'Pesanan berhasil dikonfirmasi selesai');
+    }
+
+    /**
+     * Delete patient profile and user record.
+     */
+    public function deleteProfile(Request $request): JsonResponse
+    {
+        $pasien = $this->getAuthenticatedPasien($request);
+        if (! $pasien) {
+            return $this->errorResponse('Pasien tidak ditemukan', 404);
+        }
+
+        $userId = $pasien->id_pasien;
+
+        if (method_exists($pasien, 'tokens')) {
+            $pasien->tokens()->delete();
+        }
+
+        User::where('id', $userId)->delete();
+
+        return $this->successResponse(null, 'Akun profil pasien berhasil dihapus secara permanen.');
     }
 }

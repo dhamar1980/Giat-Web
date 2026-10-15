@@ -6,7 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Models\Apotek;
 use App\Models\Notifikasi;
 use App\Models\Obat;
+use App\Models\ObatBatch;
 use App\Models\Pembelian;
+use App\Models\PesananObatTracking;
 use App\Models\Reminder;
 use App\Models\ResepObat;
 use App\Models\StockObat;
@@ -631,9 +633,198 @@ class ApotekController extends Controller
         return $this->successResponse($stock->fresh('obat'), 'Stok obat berhasil diperbarui');
     }
 
-    // =========================================================================
-    // AKTIVITAS 5: PROFILE, JAM OPERASIONAL & AREA LAYANAN
-    // =========================================================================
+    /**
+     * Get detail of a single medicine in pharmacy.
+     */
+    public function getDetailObat(int|string $id, Request $request): JsonResponse
+    {
+        $obat = Obat::with(['batches', 'stockObat'])->find($id);
+        if (! $obat) {
+            return $this->errorResponse('Obat tidak ditemukan', 404);
+        }
+
+        $apotek = $this->getAuthenticatedApotek($request);
+        $stock = $apotek ? StockObat::where('id_apoteker', $apotek->id_apotek)->where('id_obat', $id)->first() : null;
+
+        return $this->successResponse([
+            'obat' => $obat,
+            'stok_apotek' => $stock ? $stock->jumlah_stock : 0,
+            'batches' => $obat->batches ?? [],
+        ], 'Detail informasi obat apotek');
+    }
+
+    /**
+     * Update medicine information.
+     */
+    public function updateObat(Request $request, int|string $id): JsonResponse
+    {
+        $obat = Obat::find($id);
+        if (! $obat) {
+            return $this->errorResponse('Obat tidak ditemukan', 404);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'nama_obat' => 'sometimes|required|string|max:255',
+            'deskripsi' => 'nullable|string',
+            'harga' => 'sometimes|required|numeric|min:0',
+            'kategori' => 'sometimes|required|string|max:100',
+            'tipe_obat' => 'nullable|in:bebas,bebas_terbatas,keras',
+            'dosis' => 'nullable|string|max:255',
+            'efek_samping' => 'nullable|string',
+            'gambar' => 'nullable|string',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->errorResponse('Validasi update obat gagal', 422, $validator->errors());
+        }
+
+        $obat->update($validator->validated());
+
+        return $this->successResponse($obat, 'Data obat berhasil diperbarui');
+    }
+
+    /**
+     * Delete medicine from catalog.
+     */
+    public function deleteObat(int|string $id): JsonResponse
+    {
+        $obat = Obat::find($id);
+        if (! $obat) {
+            return $this->errorResponse('Obat tidak ditemukan', 404);
+        }
+
+        $obat->delete();
+
+        return $this->successResponse(null, 'Obat berhasil dihapus dari katalog');
+    }
+
+    /**
+     * Get list of medicines that are near expiry (within 90 days) or already expired.
+     */
+    public function getObatKadaluwarsa(Request $request): JsonResponse
+    {
+        $apotek = $this->getAuthenticatedApotek($request);
+        $thresholdDate = Carbon::now()->addDays(90);
+
+        $batches = ObatBatch::with('obat')
+            ->when($apotek, fn($q) => $q->where('id_apotek', $apotek->id_apotek))
+            ->where('tanggal_kadaluwarsa', '<=', $thresholdDate)
+            ->orderBy('tanggal_kadaluwarsa', 'asc')
+            ->get()
+            ->map(function ($batch) {
+                $isExpired = Carbon::parse($batch->tanggal_kadaluwarsa)->isPast();
+                return [
+                    'id_batch' => $batch->id,
+                    'no_batch' => $batch->no_batch,
+                    'obat' => $batch->obat ? $batch->obat->nama_obat : '-',
+                    'stok' => $batch->stok_batch,
+                    'tanggal_kadaluwarsa' => $batch->tanggal_kadaluwarsa->toDateString(),
+                    'status' => $isExpired ? 'Kadaluwarsa' : 'Mendekati Kadaluwarsa',
+                    'sisa_hari' => Carbon::now()->diffInDays($batch->tanggal_kadaluwarsa, false),
+                ];
+            });
+
+        return $this->successResponse($batches, 'Daftar obat mendekati / sudah kadaluwarsa');
+    }
+
+    /**
+     * Add new batch for a medicine.
+     */
+    public function tambahBatchObat(Request $request): JsonResponse
+    {
+        $apotek = $this->getAuthenticatedApotek($request);
+        if (! $apotek) {
+            return $this->errorResponse('Data apotek tidak ditemukan', 404);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'id_obat' => 'required|exists:obat,id_obat',
+            'no_batch' => 'required|string|max:100',
+            'stok_batch' => 'required|integer|min:1',
+            'tanggal_kadaluwarsa' => 'required|date|after:today',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->errorResponse('Validasi penambahan batch obat gagal', 422, $validator->errors());
+        }
+
+        DB::beginTransaction();
+        try {
+            $batch = ObatBatch::create([
+                'id_obat' => $request->id_obat,
+                'id_apotek' => $apotek->id_apotek,
+                'no_batch' => $request->no_batch,
+                'stok_batch' => $request->stok_batch,
+                'tanggal_kadaluwarsa' => $request->tanggal_kadaluwarsa,
+                'status' => 'tersedia',
+            ]);
+
+            // Update atau tambah stok akumulatif
+            $stock = StockObat::firstOrNew([
+                'id_apoteker' => $apotek->id_apotek,
+                'id_obat' => $request->id_obat,
+            ]);
+            $stock->jumlah_stock = ($stock->jumlah_stock ?? 0) + $request->stok_batch;
+            $stock->save();
+
+            DB::commit();
+
+            return $this->successResponse([
+                'batch' => $batch,
+                'total_stock' => $stock->jumlah_stock,
+            ], 'Batch obat baru berhasil ditambahkan dan stok diperbarui', 201);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return $this->errorResponse('Gagal menambahkan batch: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Add custom tracking checkpoint to order by pharmacy.
+     */
+    public function addPesananTracking(Request $request, int|string $id): JsonResponse
+    {
+        $pesanan = Pembelian::find($id);
+        if (! $pesanan) {
+            return $this->errorResponse('Pesanan tidak ditemukan', 404);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'status' => 'required|string|max:100',
+            'keterangan' => 'nullable|string',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->errorResponse('Validasi tracking gagal', 422, $validator->errors());
+        }
+
+        $timeline = $pesanan->status_lacak ?? [];
+        $timeline[] = [
+            'status' => $request->status,
+            'deskripsi' => $request->keterangan ?? $request->status,
+            'waktu' => Carbon::now()->toIso8601String(),
+        ];
+        $pesanan->status_lacak = $timeline;
+        $pesanan->save();
+
+        $tracking = PesananObatTracking::create([
+            'id_pesanan' => $pesanan->id,
+            'status' => $request->status,
+            'keterangan' => $request->keterangan,
+        ]);
+
+        // Notifikasi ke pasien
+        Notifikasi::create([
+            'id_user' => $pesanan->id_pasien,
+            'role' => 'pasien',
+            'judul' => 'Update Pengiriman Pesanan Obat',
+            'pesan' => "Pesanan #{$pesanan->id_pembelian}: {$request->status} (" . ($request->keterangan ?? '') . ")",
+            'tipe' => 'pesanan',
+            'data' => ['id_pembelian' => $pesanan->id_pembelian],
+        ]);
+
+        return $this->successResponse($tracking, 'Status tracking pesanan berhasil ditambahkan');
+    }
 
     public function getProfile(Request $request): JsonResponse
     {

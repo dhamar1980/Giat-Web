@@ -10,6 +10,7 @@ use App\Models\KonsultasiPesan;
 use App\Models\KonsultasiVideoSession;
 use App\Models\Notifikasi;
 use App\Models\Pasien;
+use App\Models\ResepObat;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -504,5 +505,167 @@ class KonsultasiController extends Controller
             ->get();
 
         return $this->successResponse($konsultasi, 'Riwayat konsultasi dokter');
+    }
+
+    /**
+     * 10. Cancel an upcoming consultation appointment.
+     */
+    public function batalKonsultasi(Request $request, int|string $id): JsonResponse
+    {
+        $konsultasi = Konsultasi::find($id);
+        if (! $konsultasi) {
+            return $this->errorResponse('Konsultasi tidak ditemukan', 404);
+        }
+
+        if (in_array($konsultasi->status, ['selesai', 'dibatalkan'])) {
+            return $this->errorResponse("Konsultasi tidak dapat dibatalkan karena sudah dalam status {$konsultasi->status}", 400);
+        }
+
+        $alasan = $request->input('alasan', 'Dibatalkan oleh pengguna');
+        $konsultasi->update([
+            'status' => 'dibatalkan',
+        ]);
+
+        // Simpan pesan di riwayat konsultasi
+        KonsultasiPesan::create([
+            'id_konsultasi' => $konsultasi->id,
+            'id_sender' => $konsultasi->id_pasien,
+            'pesan' => "Sesi konsultasi telah dibatalkan. Alasan: {$alasan}",
+        ]);
+
+        // Notifikasi ke dokter
+        Notifikasi::create([
+            'id_user' => $konsultasi->id_dokter,
+            'role' => 'dokter',
+            'judul' => 'Jadwal Konsultasi Dibatalkan',
+            'pesan' => "Sesi konsultasi dengan pasien {$konsultasi->pasien->nama} telah dibatalkan.",
+            'tipe' => 'konsultasi',
+            'data' => ['id_konsultasi' => $konsultasi->id],
+        ]);
+
+        return $this->successResponse($konsultasi, 'Konsultasi berhasil dibatalkan');
+    }
+
+    /**
+     * 11. Patient leaves a rating and review after consultation finishes.
+     */
+    public function beriRatingKonsultasi(Request $request, int|string $id): JsonResponse
+    {
+        $konsultasi = Konsultasi::find($id);
+        if (! $konsultasi) {
+            return $this->errorResponse('Konsultasi tidak ditemukan', 404);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'rating' => 'required|numeric|min:1|max:5',
+            'ulasan' => 'nullable|string',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->errorResponse('Validasi rating gagal', 422, $validator->errors());
+        }
+
+        $konsultasi->update([
+            'rating' => $request->rating,
+            'ulasan' => $request->ulasan,
+        ]);
+
+        return $this->successResponse([
+            'id_konsultasi' => $konsultasi->id,
+            'rating' => $request->rating,
+            'ulasan' => $request->ulasan,
+        ], 'Terima kasih atas ulasan dan rating yang Anda berikan kepada dokter!');
+    }
+
+    /**
+     * 12. Get e-prescription generated in this consultation session.
+     */
+    public function getResepKonsultasi(int|string $id): JsonResponse
+    {
+        $resep = ResepObat::where('id_konsultasi', $id)
+            ->with(['items', 'obat', 'dokter:id_dokter,nama,spesialisasi,no_sip,no_str', 'pasien:id_pasien,nama'])
+            ->first();
+
+        if (! $resep) {
+            return $this->errorResponse('Belum ada resep obat yang diterbitkan pada sesi konsultasi ini', 404);
+        }
+
+        return $this->successResponse($resep, 'Resep elektronik dari sesi konsultasi');
+    }
+
+    /**
+     * 13. Payment Gateway Webhook / Callback Simulator (Midtrans / Xendit).
+     */
+    public function paymentCallback(Request $request): JsonResponse
+    {
+        $orderId = $request->input('order_id') ?? $request->input('no_invoice') ?? $request->input('id_konsultasi');
+        $transactionStatus = $request->input('transaction_status', 'settlement');
+
+        if (! $orderId) {
+            return $this->errorResponse('Parameter order_id atau no_invoice wajib disertakan', 422);
+        }
+
+        $pembayaran = KonsultasiPembayaran::where('no_invoice', $orderId)
+            ->orWhere('id_konsultasi', $orderId)
+            ->first();
+
+        if (! $pembayaran) {
+            return $this->errorResponse('Data invoice pembayaran konsultasi tidak ditemukan', 404);
+        }
+
+        $isLunas = in_array(strtolower($transactionStatus), ['settlement', 'capture', 'success', 'lunas', 'paid']);
+
+        if ($isLunas) {
+            $pembayaran->update([
+                'status_bayar' => 'lunas',
+                'waktu_bayar' => Carbon::now(),
+            ]);
+
+            $konsultasi = Konsultasi::find($pembayaran->id_konsultasi);
+            if ($konsultasi) {
+                $konsultasi->update([
+                    'status' => 'berlangsung',
+                    'jam_mulai' => Carbon::now()->toTimeString(),
+                ]);
+            }
+        }
+
+        return $this->successResponse([
+            'no_invoice' => $pembayaran->no_invoice,
+            'status_bayar' => $pembayaran->status_bayar,
+        ], 'Callback notifikasi pembayaran berhasil diproses');
+    }
+
+    /**
+     * 14. End video call and store duration.
+     */
+    public function endVideoCall(Request $request, int|string $id): JsonResponse
+    {
+        $konsultasi = Konsultasi::find($id);
+        if (! $konsultasi) {
+            return $this->errorResponse('Konsultasi tidak ditemukan', 404);
+        }
+
+        $durasi = (int) $request->input('durasi_menit', 15);
+
+        KonsultasiVideoSession::updateOrCreate(
+            ['id_konsultasi' => $konsultasi->id],
+            [
+                'status_panggilan' => 'berakhir',
+                'durasi_menit' => $durasi,
+            ]
+        );
+
+        KonsultasiPesan::create([
+            'id_konsultasi' => $konsultasi->id,
+            'id_sender' => $konsultasi->id_dokter,
+            'pesan' => "Panggilan video call telah berakhir (Durasi: {$durasi} menit).",
+        ]);
+
+        return $this->successResponse([
+            'id_konsultasi' => $konsultasi->id,
+            'status_panggilan' => 'berakhir',
+            'durasi_menit' => $durasi,
+        ], 'Sesi video call telah diakhiri');
     }
 }

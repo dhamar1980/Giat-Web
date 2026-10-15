@@ -16,6 +16,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
+use Laravel\Sanctum\PersonalAccessToken;
 
 class AuthController extends Controller
 {
@@ -548,34 +549,194 @@ class AuthController extends Controller
     }
 
     /**
-     * Logout and revoke current access token.
+     * Logout and revoke current access token (or all tokens).
+     * Works both within auth:sanctum middleware and as a public fallback.
      */
-    public function logout(Request $request): JsonResponse
-    {
-        $user = $request->user();
-
-        if ($user && $user->currentAccessToken()) {
-            $user->currentAccessToken()->delete();
-        }
-
-        return $this->successResponse(null, 'Logout berhasil. Token otentikasi telah dicabut.');
-    }
-
-    /**
-     * Mark notification as read.
-     */
-    public function markNotificationRead(Request $request, int|string $id): JsonResponse
-    {
-        $notif = Notifikasi::find($id);
-
-        if (! $notif) {
-            return $this->errorResponse('Notifikasi tidak ditemukan', 404);
-        }
-
-        $notif->update(['is_read' => true]);
-
-        return $this->successResponse($notif, 'Notifikasi telah ditandai sebagai dibaca');
-    }
+     public function logout(Request $request): JsonResponse
+     {
+         $user = $request->user();
+         $tokenRevoked = false;
+         $allDevices = $request->boolean('all_devices') || $request->boolean('all');
+ 
+         // 1. If user is authenticated via Sanctum guard
+         if ($user) {
+             if ($allDevices && method_exists($user, 'tokens')) {
+                 $user->tokens()->delete();
+                 $tokenRevoked = true;
+             } elseif ($user->currentAccessToken()) {
+                 $user->currentAccessToken()->delete();
+                 $tokenRevoked = true;
+             }
+         }
+ 
+         // 2. Fallback: inspect Bearer token in Authorization header or query/body
+         if (! $tokenRevoked) {
+             $tokenString = $request->bearerToken() ?? $request->input('token');
+             if ($tokenString) {
+                 $tokenModel = PersonalAccessToken::findToken($tokenString);
+                 if ($tokenModel) {
+                     if ($allDevices && $tokenModel->tokenable && method_exists($tokenModel->tokenable, 'tokens')) {
+                         $tokenModel->tokenable->tokens()->delete();
+                     } else {
+                         $tokenModel->delete();
+                     }
+                     $tokenRevoked = true;
+                 }
+             }
+         }
+ 
+         return $this->successResponse([
+             'token_revoked' => $tokenRevoked,
+             'all_devices' => $allDevices,
+         ], 'Logout berhasil. Sesi otentikasi telah diakhiri dan token telah dicabut.');
+     }
+ 
+     /**
+      * Delete user account and revoke all tokens.
+      */
+     public function deleteAccount(Request $request): JsonResponse
+     {
+         $user = $request->user();
+ 
+         if (! $user) {
+             return $this->errorResponse('Unauthenticated. Pengguna tidak ditemukan.', 401);
+         }
+ 
+         $userId = $user->id_pasien ?? $user->id_dokter ?? $user->id_apotek ?? $user->id;
+ 
+         // Revoke all tokens
+         if (method_exists($user, 'tokens')) {
+             $user->tokens()->delete();
+         }
+ 
+         // Delete user record and cascade profile
+         User::where('id', $userId)->delete();
+ 
+         return $this->successResponse(null, 'Akun Anda telah berhasil dihapus secara permanen.');
+     }
+ 
+     /**
+      * Universal Notifications list for currently authenticated user.
+      */
+     public function getNotifikasi(Request $request): JsonResponse
+     {
+         $user = $request->user();
+         if (! $user) {
+             return $this->errorResponse('Unauthenticated', 401);
+         }
+ 
+         $userId = $user->id_pasien ?? $user->id_dokter ?? $user->id_apotek ?? $user->id;
+ 
+         $notifikasi = Notifikasi::where(function ($q) use ($userId) {
+             $q->where('id_user', $userId)->orWhereNull('id_user');
+         })
+         ->orderBy('created_at', 'desc')
+         ->paginate(20);
+ 
+         return $this->successResponse($notifikasi, 'Daftar notifikasi pengguna');
+     }
+ 
+     /**
+      * Get unread notifications count for badge display.
+      */
+     public function getUnreadNotificationCount(Request $request): JsonResponse
+     {
+         $user = $request->user();
+         if (! $user) {
+             return $this->errorResponse('Unauthenticated', 401);
+         }
+ 
+         $userId = $user->id_pasien ?? $user->id_dokter ?? $user->id_apotek ?? $user->id;
+ 
+         $unreadCount = Notifikasi::where(function ($q) use ($userId) {
+             $q->where('id_user', $userId)->orWhereNull('id_user');
+         })
+         ->where('is_read', false)
+         ->count();
+ 
+         return $this->successResponse([
+             'unread_count' => $unreadCount,
+         ], 'Jumlah notifikasi belum dibaca');
+     }
+ 
+     /**
+      * Mark all notifications as read.
+      */
+     public function markAllNotificationsRead(Request $request): JsonResponse
+     {
+         $user = $request->user();
+         if (! $user) {
+             return $this->errorResponse('Unauthenticated', 401);
+         }
+ 
+         $userId = $user->id_pasien ?? $user->id_dokter ?? $user->id_apotek ?? $user->id;
+ 
+         Notifikasi::where(function ($q) use ($userId) {
+             $q->where('id_user', $userId)->orWhereNull('id_user');
+         })
+         ->where('is_read', false)
+         ->update(['is_read' => true]);
+ 
+         return $this->successResponse(null, 'Semua notifikasi telah ditandai sebagai dibaca');
+     }
+ 
+     /**
+      * Delete a single notification.
+      */
+     public function deleteNotification(Request $request, int|string $id): JsonResponse
+     {
+         $user = $request->user();
+         $userId = $user ? ($user->id_pasien ?? $user->id_dokter ?? $user->id_apotek ?? $user->id) : null;
+ 
+         $notif = Notifikasi::where('id', $id)
+             ->when($userId, fn($q) => $q->where('id_user', $userId))
+             ->first();
+ 
+         if (! $notif) {
+             return $this->errorResponse('Notifikasi tidak ditemukan', 404);
+         }
+ 
+         $notif->delete();
+ 
+         return $this->successResponse(null, 'Notifikasi berhasil dihapus');
+     }
+ 
+     /**
+      * Clear all read notifications.
+      */
+     public function clearReadNotifications(Request $request): JsonResponse
+     {
+         $user = $request->user();
+         if (! $user) {
+             return $this->errorResponse('Unauthenticated', 401);
+         }
+ 
+         $userId = $user->id_pasien ?? $user->id_dokter ?? $user->id_apotek ?? $user->id;
+ 
+         $deleted = Notifikasi::where('id_user', $userId)
+             ->where('is_read', true)
+             ->delete();
+ 
+         return $this->successResponse([
+             'deleted_count' => $deleted,
+         ], 'Notifikasi yang sudah dibaca berhasil dibersihkan');
+     }
+ 
+     /**
+      * Mark notification as read.
+      */
+     public function markNotificationRead(Request $request, int|string $id): JsonResponse
+     {
+         $notif = Notifikasi::find($id);
+ 
+         if (! $notif) {
+             return $this->errorResponse('Notifikasi tidak ditemukan', 404);
+         }
+ 
+         $notif->update(['is_read' => true]);
+ 
+         return $this->successResponse($notif, 'Notifikasi telah ditandai sebagai dibaca');
+     }
 
     // =========================================================================
     // 3. FIREBASE AUTHENTICATION (Native Email/Password, Google Sign-in & Token Sync)

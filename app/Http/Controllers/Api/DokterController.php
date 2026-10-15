@@ -455,4 +455,93 @@ class DokterController extends Controller
 
         return $this->successResponse(null, 'Perangkat berhasil dikeluarkan (logout paksa)');
     }
+
+    /**
+     * Get detail of a specific prescription created by doctor.
+     */
+    public function getResepDetail(int|string $id): JsonResponse
+    {
+        $resep = ResepObat::with([
+            'pasien:id_pasien,nama,no_hp,foto_profile,alamat',
+            'items',
+            'obat',
+            'apotek:id_apotek,nama_apotek',
+        ])->find($id);
+
+        if (! $resep) {
+            return $this->errorResponse('Resep tidak ditemukan', 404);
+        }
+
+        return $this->successResponse($resep, 'Detail resep elektronik dokter');
+    }
+
+    /**
+     * Delete or cancel an active prescription that has not yet been redeemed.
+     */
+    public function deleteResep(Request $request, int|string $id): JsonResponse
+    {
+        $dokter = $this->getAuthenticatedDokter($request);
+        if (! $dokter) {
+            return $this->errorResponse('Dokter tidak ditemukan', 404);
+        }
+
+        $resep = ResepObat::where('id', $id)
+            ->where('id_dokter', $dokter->id_dokter)
+            ->first();
+
+        if (! $resep) {
+            return $this->errorResponse('Resep tidak ditemukan', 404);
+        }
+
+        if ($resep->status === 'ditebus') {
+            return $this->errorResponse('Resep yang sudah ditebus di apotek tidak dapat dibatalkan', 400);
+        }
+
+        $resep->update(['status' => 'dibatalkan']);
+
+        return $this->successResponse($resep, 'Resep elektronik berhasil dibatalkan');
+    }
+
+    /**
+     * Toggle doctor online availability status for telemedicine consultations.
+     */
+    public function toggleStatusPraktik(Request $request): JsonResponse
+    {
+        $dokter = $this->getAuthenticatedDokter($request);
+        if (! $dokter) {
+            return $this->errorResponse('Dokter tidak ditemukan', 404);
+        }
+
+        $statusSekarang = $dokter->is_online ?? true;
+        $statusBaru = $request->has('is_online') ? $request->boolean('is_online') : ! $statusSekarang;
+
+        $dokter->update(['is_online' => $statusBaru]);
+
+        $statusTeks = $statusBaru ? 'Aktif (Online) melayani konsultasi' : 'Tidak Aktif (Offline)';
+
+        return $this->successResponse([
+            'id_dokter' => $dokter->id_dokter,
+            'is_online' => $statusBaru,
+            'status' => $statusTeks,
+        ], "Status praktik dokter berhasil diubah menjadi {$statusTeks}");
+    }
+
+    /**
+     * Shortcut to get today's consultation schedule.
+     */
+    public function getJadwalHariIni(Request $request): JsonResponse
+    {
+        $dokter = $this->getAuthenticatedDokter($request);
+        if (! $dokter) {
+            return $this->errorResponse('Dokter tidak ditemukan', 404);
+        }
+
+        $jadwal = Konsultasi::where('id_dokter', $dokter->id_dokter)
+            ->whereDate('tanggal_konsultasi', Carbon::today())
+            ->with(['pasien:id_pasien,nama,no_hp,jenis_kelamin,foto_profile'])
+            ->orderBy('tanggal_konsultasi', 'asc')
+            ->get();
+
+        return $this->successResponse($jadwal, 'Jadwal konsultasi dokter hari ini');
+    }
 }
