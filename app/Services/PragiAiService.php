@@ -3,6 +3,8 @@
 namespace App\Services;
 
 use App\Models\PragiPertanyaan;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class PragiAiService
@@ -594,4 +596,406 @@ class PragiAiService
             'fitur_terencoded' => $encoded,
         ];
     }
+
+    /**
+     * Normalize & sanitize 16 input features to match the exact Python ML API expectations.
+     */
+    public static function normalize16Features(array $raw): array
+    {
+        return [
+            'HeartDisease' => self::cleanBinary($raw['HeartDisease'] ?? 'No'),
+            'BMI' => round((float) ($raw['BMI'] ?? 24.0), 2),
+            'Smoking' => self::cleanBinary($raw['Smoking'] ?? 'No'),
+            'AlcoholDrinking' => self::cleanBinary($raw['AlcoholDrinking'] ?? 'No'),
+            'Stroke' => self::cleanBinary($raw['Stroke'] ?? 'No'),
+            'PhysicalHealth' => max(0, min(30, (int) ($raw['PhysicalHealth'] ?? 0))),
+            'MentalHealth' => max(0, min(30, (int) ($raw['MentalHealth'] ?? 0))),
+            'DiffWalking' => self::cleanBinary($raw['DiffWalking'] ?? 'No'),
+            'Sex' => self::cleanSex($raw['Sex'] ?? 'Female'),
+            'AgeCategory' => self::cleanAgeCategory($raw['AgeCategory'] ?? '18-24'),
+            'Race' => self::cleanRace($raw['Race'] ?? 'White'),
+            'Diabetic' => self::cleanDiabetic($raw['Diabetic'] ?? 'No'),
+            'PhysicalActivity' => self::cleanBinary($raw['PhysicalActivity'] ?? 'No'),
+            'GenHealth' => self::cleanGenHealth($raw['GenHealth'] ?? 'Good'),
+            'SleepTime' => max(1, min(24, (int) ($raw['SleepTime'] ?? 7))),
+            'Asthma' => self::cleanBinary($raw['Asthma'] ?? 'No'),
+        ];
+    }
+
+    /**
+     * Transmit 16-feature payload to external Python ML API.
+     * Includes automated graceful fallback to internal medical rule engine if Python API is offline.
+     */
+    public static function transmitToPythonApi(array $rawPayload): array
+    {
+        $cleanPayload = self::normalize16Features($rawPayload);
+        $encodedPayload = self::encodePayload($cleanPayload);
+        $internalEval = self::evaluateScreening($cleanPayload);
+
+        $url = config('services.pragi_ai.url') ?: env('PRAGI_AI_ML_URL');
+
+        // Jika URL API Python belum dikonfigurasi di .env
+        if (empty($url)) {
+            $fallbackProbCkd = round($internalEval['skor'] / 15.0, 4);
+            $fallbackProbNoCkd = round(1.0 - $fallbackProbCkd, 4);
+            $fallbackConf = round($fallbackProbCkd * 100.0, 2);
+            $fallbackPred = $internalEval['kategori_risiko'] === 'tinggi' ? 1 : 0;
+            $fallbackLabel = $fallbackPred === 1 ? 'Berisiko Penyakit Ginjal Kronis (CKD)' : 'Tidak Berisiko Penyakit Ginjal Kronis (Stabil)';
+
+            return [
+                'status' => 'fallback',
+                'sumber_prediksi' => 'internal_rule_engine',
+                'is_fallback' => true,
+                'status_transmisi' => 'url_not_configured',
+                'pesan_sistem' => 'PRAGI_AI_ML_URL belum diatur di .env. Prediksi diproses oleh Engine Evaluasi Cerdas GIAT.',
+                'skor' => $internalEval['skor'],
+                'kategori_risiko' => $internalEval['kategori_risiko'],
+                'hasil_prediksi' => $fallbackLabel,
+                'label' => $fallbackLabel,
+                'prediction' => $fallbackPred,
+                'confidence_percent' => $fallbackConf,
+                'probabilitas' => $fallbackProbCkd,
+                'probability' => [
+                    'ckd' => $fallbackProbCkd,
+                    'no_ckd' => $fallbackProbNoCkd,
+                ],
+                'rekomendasi' => $internalEval['rekomendasi'],
+                'faktor_risiko_teridentifikasi' => $internalEval['faktor_risiko_teridentifikasi'],
+                'fitur_terencoded' => $encodedPayload,
+                'payload_terkirim' => $cleanPayload,
+            ];
+        }
+
+        $timeout = (int) (config('services.pragi_ai.timeout') ?: env('PRAGI_AI_ML_TIMEOUT', 10));
+        $apiKey = config('services.pragi_ai.api_key') ?: env('PRAGI_AI_ML_KEY');
+
+        try {
+            $req = Http::timeout($timeout)->acceptJson()->asJson();
+            if (! empty($apiKey)) {
+                $req->withToken($apiKey)->withHeaders(['X-API-Key' => $apiKey]);
+            }
+
+            $response = $req->post($url, $cleanPayload);
+
+            if ($response->successful()) {
+                $pyData = $response->json() ?? [];
+
+                // 1. Ekstrak field spesifik dari output API AI Python pengguna:
+                // Format: {"confidence_percent": 62.62, "label": "Berisiko Penyakit Ginjal Kronis (CKD)", "prediction": 1, "probability": {"ckd": 0.6262, "no_ckd": 0.3738}, "status": "success"}
+                $rawPrediction = $pyData['prediction'] ?? $pyData['prediksi'] ?? $pyData['result'] ?? null;
+                $rawLabel = $pyData['label'] ?? null;
+                $rawConfidence = $pyData['confidence_percent'] ?? $pyData['confidence'] ?? null;
+                $rawProb = $pyData['probability'] ?? $pyData['proba'] ?? $pyData['probabilitas'] ?? null;
+                $rawRisk = $pyData['kategori_risiko'] ?? $pyData['risk_category'] ?? $pyData['risk'] ?? null;
+
+                // 2. Parsing probabilitas detail (CKD & No-CKD)
+                $probCkd = null;
+                $probNoCkd = null;
+                $probabilityDetail = null;
+
+                if (is_array($rawProb)) {
+                    $probCkd = isset($rawProb['ckd']) ? (float) $rawProb['ckd'] : null;
+                    $probNoCkd = isset($rawProb['no_ckd']) ? (float) $rawProb['no_ckd'] : null;
+                    $probabilityDetail = [
+                        'ckd' => $probCkd !== null ? round($probCkd, 4) : 0.0,
+                        'no_ckd' => $probNoCkd !== null ? round($probNoCkd, 4) : 0.0,
+                    ];
+                } elseif (is_numeric($rawProb)) {
+                    $val = (float) $rawProb;
+                    $probCkd = ($val > 1.0) ? round($val / 100.0, 4) : round($val, 4);
+                    $probNoCkd = round(1.0 - $probCkd, 4);
+                    $probabilityDetail = [
+                        'ckd' => $probCkd,
+                        'no_ckd' => $probNoCkd,
+                    ];
+                }
+
+                // 3. Parsing confidence percent
+                $confidencePercent = null;
+                if (! is_null($rawConfidence)) {
+                    $confidencePercent = (float) $rawConfidence;
+                } elseif ($probCkd !== null) {
+                    $confidencePercent = round($probCkd * 100.0, 2);
+                }
+
+                // 4. Parsing prediction code (0 atau 1)
+                $predictionCode = null;
+                if (! is_null($rawPrediction)) {
+                    if (is_numeric($rawPrediction)) {
+                        $predictionCode = (int) $rawPrediction;
+                    } else {
+                        $pStr = strtolower(trim((string) $rawPrediction));
+                        $predictionCode = in_array($pStr, ['1', 'yes', 'ya', 'true', 'ckd', 'positive', 'positif', 'berisiko'], true) ? 1 : 0;
+                    }
+                }
+
+                // 5. Tentukan Kategori Risiko Klinis (rendah / sedang / tinggi)
+                $kategoriRisiko = null;
+                if (! empty($rawRisk)) {
+                    $rStr = strtolower(trim((string) $rawRisk));
+                    if (str_contains($rStr, 'tinggi') || str_contains($rStr, 'high')) {
+                        $kategoriRisiko = 'tinggi';
+                    } elseif (str_contains($rStr, 'sedang') || str_contains($rStr, 'medium') || str_contains($rStr, 'moderate')) {
+                        $kategoriRisiko = 'sedang';
+                    } else {
+                        $kategoriRisiko = 'rendah';
+                    }
+                } elseif ($predictionCode !== null) {
+                    if ($predictionCode === 1) {
+                        // Jika model mendeteksi risiko CKD
+                        if (($confidencePercent !== null && $confidencePercent >= 60.0) || ($probCkd !== null && $probCkd >= 0.60)) {
+                            $kategoriRisiko = 'tinggi';
+                        } else {
+                            $kategoriRisiko = 'sedang';
+                        }
+                    } else {
+                        // Jika model mendeteksi tidak berisiko (prediction = 0)
+                        if ($probCkd !== null && $probCkd >= 0.35) {
+                            $kategoriRisiko = 'sedang';
+                        } else {
+                            $kategoriRisiko = 'rendah';
+                        }
+                    }
+                } elseif ($probCkd !== null) {
+                    if ($probCkd >= 0.60) {
+                        $kategoriRisiko = 'tinggi';
+                    } elseif ($probCkd >= 0.30) {
+                        $kategoriRisiko = 'sedang';
+                    } else {
+                        $kategoriRisiko = 'rendah';
+                    }
+                } else {
+                    $kategoriRisiko = $internalEval['kategori_risiko'];
+                }
+
+                // 6. Tentukan Label / Hasil Prediksi (prioritaskan label AI Python)
+                $prediksiText = $rawLabel ?? match ($kategoriRisiko) {
+                    'tinggi' => 'Berisiko Penyakit Ginjal Kronis (CKD)',
+                    'sedang' => 'Risiko Sedang Penyakit Ginjal Kronis (CKD)',
+                    default => 'Tidak Berisiko Penyakit Ginjal Kronis (Stabil)',
+                };
+
+                // 7. Susun Rekomendasi Medis Personal Berdasarkan Model AI
+                $confText = $confidencePercent !== null ? " (Tingkat Keyakinan AI: {$confidencePercent}%)" : '';
+                $rekomendasi = $pyData['recommendation'] ?? $pyData['rekomendasi'] ?? match ($kategoriRisiko) {
+                    'tinggi' => "PERINGATAN AI{$confText}: Model Machine Learning mendeteksi indikasi kuat {$prediksiText}. Segera jadwalkan konsultasi telemedisin dengan Dokter Ginjal (Nefrolog) di GIAT untuk pemeriksaan laboratorium ureum, kreatinin, dan laju filtrasi glomerulus (eGFR).",
+                    'sedang' => "PERHATIAN AI{$confText}: Terdeteksi beberapa indikator risiko kardiovaskular dan penurunan fungsi ginjal. Jaga pola asupan cairan 2L/hari, batasi konsumsi garam & gula berlebih, catat kondisi fisik di menu Pantau, dan jadwalkan konsultasi berkala.",
+                    default => "HASIL AI{$confText}: Profil klinis Anda saat ini dinilai stabil dan berisiko rendah terhadap CKD. Pertahankan gaya hidup sehat, cukupi hidrasi air putih harian, dan hindari penggunaan obat pereda nyeri (NSAID) bebas tanpa anjuran dokter.",
+                };
+
+                return [
+                    'status' => 'success',
+                    'sumber_prediksi' => 'python_ml_api',
+                    'is_fallback' => false,
+                    'status_transmisi' => 'transmitted_200',
+                    'skor' => $internalEval['skor'],
+                    'kategori_risiko' => $kategoriRisiko,
+                    'hasil_prediksi' => $prediksiText,
+                    'label' => $prediksiText,
+                    'prediction' => $predictionCode ?? ($kategoriRisiko === 'tinggi' ? 1 : 0),
+                    'confidence_percent' => $confidencePercent,
+                    'probabilitas' => $probCkd ?? round($internalEval['skor'] / 15.0, 4),
+                    'probability' => $probabilityDetail ?? [
+                        'ckd' => $probCkd ?? round($internalEval['skor'] / 15.0, 4),
+                        'no_ckd' => $probNoCkd ?? round(1.0 - ($internalEval['skor'] / 15.0), 4),
+                    ],
+                    'rekomendasi' => $rekomendasi,
+                    'faktor_risiko_teridentifikasi' => $internalEval['faktor_risiko_teridentifikasi'],
+                    'fitur_terencoded' => $encodedPayload,
+                    'payload_terkirim' => $cleanPayload,
+                    'raw_python_response' => $pyData,
+                ];
+            }
+
+            // Jika API Python mengembalikan status HTTP 4xx atau 5xx
+            Log::warning("Pragi AI Python API returned HTTP {$response->status()}: " . $response->body());
+
+            $fallbackProbCkd = round($internalEval['skor'] / 15.0, 4);
+            $fallbackProbNoCkd = round(1.0 - $fallbackProbCkd, 4);
+            $fallbackConf = round($fallbackProbCkd * 100.0, 2);
+            $fallbackPred = $internalEval['kategori_risiko'] === 'tinggi' ? 1 : 0;
+            $fallbackLabel = $fallbackPred === 1 ? 'Berisiko Penyakit Ginjal Kronis (CKD)' : 'Tidak Berisiko Penyakit Ginjal Kronis (Stabil)';
+
+            return [
+                'status' => 'fallback',
+                'sumber_prediksi' => 'internal_rule_engine',
+                'is_fallback' => true,
+                'status_transmisi' => 'http_error_' . $response->status(),
+                'pesan_sistem' => "API Python mengembalikan HTTP {$response->status()}. Prediksi dialihkan ke Engine GIAT.",
+                'skor' => $internalEval['skor'],
+                'kategori_risiko' => $internalEval['kategori_risiko'],
+                'hasil_prediksi' => $fallbackLabel,
+                'label' => $fallbackLabel,
+                'prediction' => $fallbackPred,
+                'confidence_percent' => $fallbackConf,
+                'probabilitas' => $fallbackProbCkd,
+                'probability' => [
+                    'ckd' => $fallbackProbCkd,
+                    'no_ckd' => $fallbackProbNoCkd,
+                ],
+                'rekomendasi' => $internalEval['rekomendasi'],
+                'faktor_risiko_teridentifikasi' => $internalEval['faktor_risiko_teridentifikasi'],
+                'fitur_terencoded' => $encodedPayload,
+                'payload_terkirim' => $cleanPayload,
+            ];
+
+        } catch (\Throwable $e) {
+            Log::warning("Pragi AI Python API transmission exception: {$e->getMessage()}");
+
+            $fallbackProbCkd = round($internalEval['skor'] / 15.0, 4);
+            $fallbackProbNoCkd = round(1.0 - $fallbackProbCkd, 4);
+            $fallbackConf = round($fallbackProbCkd * 100.0, 2);
+            $fallbackPred = $internalEval['kategori_risiko'] === 'tinggi' ? 1 : 0;
+            $fallbackLabel = $fallbackPred === 1 ? 'Berisiko Penyakit Ginjal Kronis (CKD)' : 'Tidak Berisiko Penyakit Ginjal Kronis (Stabil)';
+
+            return [
+                'status' => 'fallback',
+                'sumber_prediksi' => 'internal_rule_engine',
+                'is_fallback' => true,
+                'status_transmisi' => 'connection_failed',
+                'pesan_sistem' => "Gagal terhubung ke API Python ({$e->getMessage()}). Prediksi dialihkan ke Engine GIAT.",
+                'skor' => $internalEval['skor'],
+                'kategori_risiko' => $internalEval['kategori_risiko'],
+                'hasil_prediksi' => $fallbackLabel,
+                'label' => $fallbackLabel,
+                'prediction' => $fallbackPred,
+                'confidence_percent' => $fallbackConf,
+                'probabilitas' => $fallbackProbCkd,
+                'probability' => [
+                    'ckd' => $fallbackProbCkd,
+                    'no_ckd' => $fallbackProbNoCkd,
+                ],
+                'rekomendasi' => $internalEval['rekomendasi'],
+                'faktor_risiko_teridentifikasi' => $internalEval['faktor_risiko_teridentifikasi'],
+                'fitur_terencoded' => $encodedPayload,
+                'payload_terkirim' => $cleanPayload,
+            ];
+        }
+    }
+
+    /**
+     * Check health and connectivity to external Python ML API.
+     */
+    public static function checkPythonApiHealth(): array
+    {
+        $url = config('services.pragi_ai.url') ?: env('PRAGI_AI_ML_URL');
+        if (empty($url)) {
+            return [
+                'configured' => false,
+                'online' => false,
+                'url' => null,
+                'message' => 'PRAGI_AI_ML_URL belum diatur di .env',
+            ];
+        }
+
+        try {
+            $timeout = min((int) (config('services.pragi_ai.timeout') ?: 5), 5);
+            $res = Http::timeout($timeout)->get($url);
+
+            return [
+                'configured' => true,
+                'online' => $res->successful(),
+                'status_code' => $res->status(),
+                'url' => $url,
+                'message' => $res->successful() ? 'API Python aktif dan terhubung' : "API merespon status {$res->status()}",
+            ];
+        } catch (\Throwable $e) {
+            return [
+                'configured' => true,
+                'online' => false,
+                'url' => $url,
+                'error' => $e->getMessage(),
+                'message' => 'Tidak dapat terhubung ke API Python: ' . $e->getMessage(),
+            ];
+        }
+    }
+
+    protected static function cleanBinary($val, string $default = 'No'): string
+    {
+        if (is_null($val)) return $default;
+        $v = strtolower(trim((string) $val));
+        if (in_array($v, ['yes', 'ya', '1', 'true', 'y'], true)) {
+            return 'Yes';
+        }
+        if (in_array($v, ['no', 'tidak', '0', 'false', 'n'], true)) {
+            return 'No';
+        }
+        return $default;
+    }
+
+    protected static function cleanSex($val, string $default = 'Female'): string
+    {
+        $v = strtolower(trim((string) $val));
+        if (in_array($v, ['male', 'laki-laki', 'l', 'pria', '1'], true)) {
+            return 'Male';
+        }
+        if (in_array($v, ['female', 'perempuan', 'p', 'wanita', '0'], true)) {
+            return 'Female';
+        }
+        return $default;
+    }
+
+    protected static function cleanRace($val, string $default = 'White'): string
+    {
+        $allowed = [
+            'american indian/alaskan native' => 'American Indian/Alaskan Native',
+            'asian' => 'Asian',
+            'black' => 'Black',
+            'hispanic' => 'Hispanic',
+            'other' => 'Other',
+            'white' => 'White',
+        ];
+        $v = strtolower(trim((string) $val));
+        return $allowed[$v] ?? $default;
+    }
+
+    protected static function cleanDiabetic($val, string $default = 'No'): string
+    {
+        $allowed = [
+            'no' => 'No',
+            'no, borderline diabetes' => 'No, borderline diabetes',
+            'borderline' => 'No, borderline diabetes',
+            'pradiabetes' => 'No, borderline diabetes',
+            'yes' => 'Yes',
+            'ya' => 'Yes',
+            '1' => 'Yes',
+            'yes (during pregnancy)' => 'Yes (during pregnancy)',
+            'pregnancy' => 'Yes (during pregnancy)',
+        ];
+        $v = strtolower(trim((string) $val));
+        return $allowed[$v] ?? $default;
+    }
+
+    protected static function cleanGenHealth($val, string $default = 'Good'): string
+    {
+        $allowed = [
+            'poor' => 'Poor',
+            'fair' => 'Fair',
+            'good' => 'Good',
+            'very good' => 'Very good',
+            'excellent' => 'Excellent',
+        ];
+        $v = strtolower(trim((string) $val));
+        return $allowed[$v] ?? $default;
+    }
+
+    protected static function cleanAgeCategory($val, string $default = '18-24'): string
+    {
+        $allowed = [
+            '18-24', '25-29', '30-34', '35-39', '40-44',
+            '45-49', '50-54', '55-59', '60-64', '65-69',
+            '70-74', '75-79', '80 or older',
+        ];
+        $valStr = trim((string) $val);
+        foreach ($allowed as $item) {
+            if (strcasecmp($valStr, $item) === 0) {
+                return $item;
+            }
+        }
+        if (is_numeric($val) && (int) $val >= 0 && (int) $val <= 12) {
+            return $allowed[(int) $val] ?? $default;
+        }
+        return $default;
+    }
 }
+

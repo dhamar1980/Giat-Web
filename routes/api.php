@@ -68,10 +68,12 @@ Route::get('/edukasi', [PasienController::class, 'getEdukasiList']);
 Route::get('/edukasi/kategori', [PasienController::class, 'getEdukasiKategori']);
 Route::get('/edukasi/{id}', [PasienController::class, 'getEdukasiDetail']);
 
-// Public PRAGI Skrining Questions (AI PRAGI)
+// Public PRAGI Skrining Questions & ML Transmission Utilities (AI PRAGI)
 Route::get('/pragi/pertanyaan', [PasienController::class, 'getPragiQuestions']);
 Route::get('/pragi/ai-pertanyaan', [PasienController::class, 'getPragiQuestions']);
 Route::get('/pragi/ai/pertanyaan', [PasienController::class, 'getPragiQuestions']);
+Route::get('/pragi/ml-status', [PasienController::class, 'checkPragiMlStatus']);
+Route::post('/pragi/encode', [PasienController::class, 'encodePragiData']);
 
 // Public Payment Gateway Callback / Webhook Simulator
 Route::post('/konsultasi/payment-callback', [KonsultasiController::class, 'paymentCallback']);
@@ -145,11 +147,15 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('/pantau/{id}', [PasienController::class, 'updatePantau']);
         Route::delete('/pantau/{id}', [PasienController::class, 'deletePantau']);
 
-        // 5. PRAGI (Skrining Risiko CKD & Chatbot AI PRAGI)
+        // 5. PRAGI (Skrining Risiko CKD, Transmisi Prediksi Python ML & Chatbot AI)
         Route::get('/pragi/pertanyaan', [PasienController::class, 'getPragiQuestions']);
         Route::get('/pragi/ai-pertanyaan', [PasienController::class, 'getPragiQuestions']);
         Route::get('/pragi/ai/pertanyaan', [PasienController::class, 'getPragiQuestions']);
         Route::post('/pragi/skrining', [PasienController::class, 'submitPragi']);
+        Route::post('/pragi/predict', [PasienController::class, 'submitPragiPredict']);
+        Route::post('/pragi/prediksi', [PasienController::class, 'submitPragiPredict']);
+        Route::get('/pragi/ml-status', [PasienController::class, 'checkPragiMlStatus']);
+        Route::post('/pragi/encode', [PasienController::class, 'encodePragiData']);
         Route::get('/pragi/riwayat', [PasienController::class, 'getPragiHistory']);
         Route::get('/pragi/riwayat/{id}', [PasienController::class, 'getPragiDetail']);
         Route::post('/pragi/chat', [PasienController::class, 'chatPragi']);

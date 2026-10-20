@@ -745,40 +745,55 @@ class PasienController extends Controller
             return $this->errorResponse('Pasien tidak ditemukan', 404);
         }
 
-        $validator = Validator::make($request->all(), [
-            'jawaban' => 'required|array',
-        ]);
-
-        if ($validator->fails()) {
-            return $this->errorResponse('Validasi jawaban skrining gagal', 422, $validator->errors());
+        // Ambil data jawaban: bisa bersarang di key 'jawaban' atau langsung di root body JSON
+        $input = $request->input('jawaban');
+        if (! is_array($input)) {
+            $input = $request->except(['_token']);
         }
 
-        $jawaban = $request->jawaban;
-        $evaluasi = PragiAiService::evaluateScreening($jawaban);
+        if (empty($input)) {
+            return $this->errorResponse('Data jawaban skrining wajib dikirim', 422);
+        }
+
+        // Cek apakah format legacy numerik (1 => 'ya', ...)
+        if (isset($input[1]) || isset($input['1'])) {
+            $evaluasi = PragiAiService::evaluateScreening($input);
+            $cleanPayload = $input;
+        } else {
+            // Transmisi ke API Python ML (dengan fallback internal otomatis jika offline)
+            $evaluasi = PragiAiService::transmitToPythonApi($input);
+            $cleanPayload = $evaluasi['payload_terkirim'] ?? $input;
+        }
+
         $skor = $evaluasi['skor'];
-        $prediksi = $evaluasi['prediksi'];
+        $prediksi = $evaluasi['hasil_prediksi'] ?? $evaluasi['prediksi'];
+        $kategoriRisiko = $evaluasi['kategori_risiko'];
         $rekomendasi = $evaluasi['rekomendasi'];
+        $probabilitas = $evaluasi['probabilitas'] ?? null;
+        $sumberPrediksi = $evaluasi['sumber_prediksi'] ?? 'python_ml_api';
 
         $pragi = Pragi::create([
             'id_pasien' => $pasien->id_pasien,
-            'pertanyaan' => json_encode($jawaban),
+            'pertanyaan' => json_encode($cleanPayload),
             'hasil_prediksi' => $prediksi,
             'rekomendasi' => $rekomendasi,
             'tanggal_screening' => Carbon::now(),
         ]);
 
         // Buat notifikasi jika risiko tinggi
-        if ($skor > 5 || $evaluasi['kategori_risiko'] === 'tinggi') {
+        if ($skor > 5 || $kategoriRisiko === 'tinggi' || ($probabilitas !== null && $probabilitas >= 0.60)) {
             Notifikasi::create([
                 'id_user' => $pasien->id_pasien,
                 'role' => 'pasien',
-                'judul' => 'Perhatian: Hasil Skrining PRAGI Berisiko Tinggi',
+                'judul' => 'Perhatian: Hasil Skrining AI PRAGI Berisiko Tinggi',
                 'pesan' => 'Hasil skrining menunjukkan skor ' . $skor . ' (' . $prediksi . '). Disarankan untuk segera melakukan konsultasi dengan Dokter Ginjal di aplikasi GIAT.',
                 'tipe' => 'pragi',
                 'data' => [
                     'id_pragi' => $pragi->id_pragi,
                     'skor' => $skor,
-                    'kategori_risiko' => $evaluasi['kategori_risiko'],
+                    'kategori_risiko' => $kategoriRisiko,
+                    'probabilitas' => $probabilitas,
+                    'sumber_prediksi' => $sumberPrediksi,
                     'faktor_risiko' => $evaluasi['faktor_risiko_teridentifikasi'] ?? [],
                 ],
             ]);
@@ -786,13 +801,58 @@ class PasienController extends Controller
 
         return $this->successResponse([
             'id_pragi' => $pragi->id_pragi,
-            'skor' => $skor,
-            'kategori_risiko' => $evaluasi['kategori_risiko'],
+            'label' => $evaluasi['label'] ?? $prediksi,
+            'prediction' => $evaluasi['prediction'] ?? ($kategoriRisiko === 'tinggi' ? 1 : 0),
+            'confidence_percent' => $evaluasi['confidence_percent'] ?? round(($probabilitas ?? 0) * 100, 2),
+            'probability' => $evaluasi['probability'] ?? [
+                'ckd' => $probabilitas,
+                'no_ckd' => $probabilitas !== null ? round(1.0 - $probabilitas, 4) : null,
+            ],
+            'kategori_risiko' => $kategoriRisiko,
             'hasil_prediksi' => $prediksi,
+            'skor' => $skor,
+            'probabilitas' => $probabilitas,
             'rekomendasi' => $rekomendasi,
             'faktor_risiko' => $evaluasi['faktor_risiko_teridentifikasi'] ?? [],
+            'fitur_terencoded' => $evaluasi['fitur_terencoded'] ?? null,
+            'sumber_prediksi' => $sumberPrediksi,
+            'is_fallback' => $evaluasi['is_fallback'] ?? false,
+            'catatan_sistem' => $evaluasi['pesan_sistem'] ?? null,
             'tanggal_screening' => $pragi->tanggal_screening,
-        ], 'Skrining PRAGI berhasil diproses', 201);
+        ], 'Skrining AI PRAGI berhasil diproses dan diprediksi', 201);
+    }
+
+    /**
+     * Dedicated Endpoint: Submit and predict PRAGI AI via Python ML Transmission Gateway.
+     */
+    public function submitPragiPredict(Request $request): JsonResponse
+    {
+        return $this->submitPragi($request);
+    }
+
+    /**
+     * Check status and connectivity of Python ML API.
+     */
+    public function checkPragiMlStatus(): JsonResponse
+    {
+        $status = PragiAiService::checkPythonApiHealth();
+
+        return $this->successResponse($status, 'Status koneksi API Python ML PRAGI');
+    }
+
+    /**
+     * Developer/Client Utility: Encode 16 raw features into machine learning array.
+     */
+    public function encodePragiData(Request $request): JsonResponse
+    {
+        $raw = $request->input('jawaban') ?? $request->all();
+        $clean = PragiAiService::normalize16Features($raw);
+        $encoded = PragiAiService::encodePayload($clean);
+
+        return $this->successResponse([
+            'data_mentah' => $clean,
+            'data_encoded' => $encoded,
+        ], 'Hasil encoding 16 fitur untuk model Machine Learning');
     }
 
     public function getPragiHistory(Request $request): JsonResponse

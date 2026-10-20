@@ -602,12 +602,65 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"jawaban\": {\n    \"HeartDisease\": 0,\n    \"Smoking\": 1,\n    \"AlcoholDrinking\": 0,\n    \"Stroke\": 0,\n    \"DiffWalking\": 0,\n    \"PhysicalActivity\": 1,\n    \"Asthma\": 0,\n    \"KidneyDisease\": 0,\n    \"Sex\": 1,\n    \"Diabetic\": 0,\n    \"GenHealth\": 2,\n    \"AgeCategory\": 4,\n    \"Race\": \"Asian\"\n  }\n}"
+							"raw": "{\n  \"HeartDisease\": \"No\",\n  \"BMI\": 26.45,\n  \"Smoking\": \"No\",\n  \"AlcoholDrinking\": \"No\",\n  \"Stroke\": \"No\",\n  \"PhysicalHealth\": 0,\n  \"MentalHealth\": 0,\n  \"DiffWalking\": \"No\",\n  \"Sex\": \"Female\",\n  \"AgeCategory\": \"80 or older\",\n  \"Race\": \"White\",\n  \"Diabetic\": \"No, borderline diabetes\",\n  \"PhysicalActivity\": \"No\",\n  \"GenHealth\": \"Fair\",\n  \"SleepTime\": 5,\n  \"Asthma\": \"No\"\n}"
 						},
 						"url": {
 							"raw": "{{base_url}}/pasien/pragi/skrining",
 							"host": ["{{base_url}}"],
 							"path": ["pasien", "pragi", "skrining"]
+						}
+					}
+				},
+				{
+					"name": "Transmisi Prediksi Python ML (16 Fitur Pasien)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"HeartDisease\": \"No\",\n  \"BMI\": 26.45,\n  \"Smoking\": \"No\",\n  \"AlcoholDrinking\": \"No\",\n  \"Stroke\": \"No\",\n  \"PhysicalHealth\": 0,\n  \"MentalHealth\": 0,\n  \"DiffWalking\": \"No\",\n  \"Sex\": \"Female\",\n  \"AgeCategory\": \"80 or older\",\n  \"Race\": \"White\",\n  \"Diabetic\": \"No, borderline diabetes\",\n  \"PhysicalActivity\": \"No\",\n  \"GenHealth\": \"Fair\",\n  \"SleepTime\": 5,\n  \"Asthma\": \"No\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/pasien/pragi/predict",
+							"host": ["{{base_url}}"],
+							"path": ["pasien", "pragi", "predict"]
+						}
+					}
+				},
+				{
+					"name": "Cek Status Koneksi API Python ML PRAGI",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Accept", "value": "application/json"}
+						],
+						"url": {
+							"raw": "{{base_url}}/pragi/ml-status",
+							"host": ["{{base_url}}"],
+							"path": ["pragi", "ml-status"]
+						}
+					}
+				},
+				{
+					"name": "Test Feature Encoder ML (One-Hot & Numeric)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"HeartDisease\": \"No\",\n  \"BMI\": 26.45,\n  \"Smoking\": \"No\",\n  \"AlcoholDrinking\": \"No\",\n  \"Stroke\": \"No\",\n  \"PhysicalHealth\": 0,\n  \"MentalHealth\": 0,\n  \"DiffWalking\": \"No\",\n  \"Sex\": \"Female\",\n  \"AgeCategory\": \"80 or older\",\n  \"Race\": \"White\",\n  \"Diabetic\": \"No, borderline diabetes\",\n  \"PhysicalActivity\": \"No\",\n  \"GenHealth\": \"Fair\",\n  \"SleepTime\": 5,\n  \"Asthma\": \"No\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/pragi/encode",
+							"host": ["{{base_url}}"],
+							"path": ["pragi", "encode"]
 						}
 					}
 				},

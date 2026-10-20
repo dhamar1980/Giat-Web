@@ -35,4 +35,10 @@ return [
         ],
     ],
 
+    'pragi_ai' => [
+        'url' => env('PRAGI_AI_ML_URL', null),
+        'timeout' => (int) env('PRAGI_AI_ML_TIMEOUT', 10),
+        'api_key' => env('PRAGI_AI_ML_KEY', null),
+    ],
+
 ];

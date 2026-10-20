@@ -174,26 +174,50 @@ class GiatApiTest extends TestCase
         ])->assertStatus(201)->assertJson(['success' => true]);
 
         // Uji submit skrining format AI PRAGI (16 pertanyaan / fitur)
+        $sample16 = [
+            'HeartDisease' => 'No',
+            'BMI' => 26.45,
+            'Smoking' => 'No',
+            'AlcoholDrinking' => 'No',
+            'Stroke' => 'No',
+            'PhysicalHealth' => 0,
+            'MentalHealth' => 0,
+            'DiffWalking' => 'No',
+            'Sex' => 'Female',
+            'AgeCategory' => '80 or older',
+            'Race' => 'White',
+            'Diabetic' => 'No, borderline diabetes',
+            'PhysicalActivity' => 'No',
+            'GenHealth' => 'Fair',
+            'SleepTime' => 5,
+            'Asthma' => 'No',
+        ];
+
         $this->postJson('/api/pasien/pragi/skrining', [
-            'jawaban' => [
-                'HeartDisease' => 'No',
-                'BMI' => 26.45,
-                'Smoking' => 'No',
-                'AlcoholDrinking' => 'No',
-                'Stroke' => 'No',
-                'PhysicalHealth' => 0,
-                'MentalHealth' => 0,
-                'DiffWalking' => 'No',
-                'Sex' => 'Female',
-                'AgeCategory' => '80 or older',
-                'Race' => 'White',
-                'Diabetic' => 'No, borderline diabetes',
-                'PhysicalActivity' => 'No',
-                'GenHealth' => 'Fair',
-                'SleepTime' => 5,
-                'Asthma' => 'No',
-            ],
+            'jawaban' => $sample16,
         ])->assertStatus(201)->assertJson(['success' => true]);
+
+        // Uji endpoint baru transmisi prediksi Python ML: /api/pasien/pragi/predict
+        $this->postJson('/api/pasien/pragi/predict', $sample16)
+            ->assertStatus(201)
+            ->assertJson(['success' => true])
+            ->assertJsonStructure([
+                'data' => [
+                    'id_pragi',
+                    'skor',
+                    'kategori_risiko',
+                    'hasil_prediksi',
+                    'probabilitas',
+                    'rekomendasi',
+                    'sumber_prediksi',
+                ],
+            ]);
+
+        // Uji status ML & Encoder utilities
+        $this->getJson('/api/pragi/ml-status')->assertStatus(200);
+        $this->postJson('/api/pragi/encode', $sample16)->assertStatus(200)->assertJsonStructure([
+            'data' => ['data_mentah', 'data_encoded'],
+        ]);
 
         $this->postJson('/api/pasien/pragi/chat', [
             'pesan' => 'Bagaimana cara mencegah penyakit ginjal dan berapa liter air putih yang harus saya minum?',
