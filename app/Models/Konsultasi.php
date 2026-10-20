@@ -53,10 +53,13 @@ class Konsultasi extends Model
         'jenis_layanan',
         'status',
         'status_konsultasi',
+        'rating',
+        'ulasan',
     ];
 
     protected $casts = [
         'tanggal_konsultasi' => 'date',
+        'rating' => 'integer',
     ];
 
     protected $appends = [
@@ -147,5 +150,10 @@ class Konsultasi extends Model
     public function resepObat(): HasOne
     {
         return $this->hasOne(Resep::class, 'id_konsultasi', 'id');
+    }
+
+    public function ulasanDokter(): HasOne
+    {
+        return $this->hasOne(UlasanDokter::class, 'id_konsultasi', 'id');
     }
 }

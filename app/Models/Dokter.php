@@ -182,4 +182,9 @@ class Dokter extends Authenticatable
     {
         return $this->hasMany(Resep::class, 'id_dokter', 'id_dokter');
     }
+
+    public function ulasan(): HasMany
+    {
+        return $this->hasMany(UlasanDokter::class, 'id_dokter', 'id_dokter');
+    }
 }

@@ -11,6 +11,8 @@ use App\Models\KonsultasiVideoSession;
 use App\Models\Notifikasi;
 use App\Models\Pasien;
 use App\Models\ResepObat;
+use App\Models\UlasanDokter;
+use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -24,7 +26,7 @@ class KonsultasiController extends Controller
      */
     protected function getActor(Request $request): array
     {
-        $user = $request->user();
+        $user = $request->user() ?? auth('sanctum')->user();
 
         if ($user instanceof Dokter) {
             return ['type' => 'dokter', 'model' => $user, 'id' => $user->id_dokter];
@@ -32,6 +34,15 @@ class KonsultasiController extends Controller
 
         if ($user instanceof Pasien) {
             return ['type' => 'pasien', 'model' => $user, 'id' => $user->id_pasien];
+        }
+
+        if ($user instanceof User) {
+            if ($user->role === 'dokter' || $user->dokter) {
+                $dokter = $user->dokter ?? Dokter::find($user->id);
+                return ['type' => 'dokter', 'model' => $dokter ?? $user, 'id' => $dokter?->id_dokter ?? $user->id];
+            }
+            $pasien = $user->pasien ?? Pasien::find($user->id);
+            return ['type' => 'pasien', 'model' => $pasien ?? $user, 'id' => $pasien?->id_pasien ?? $user->id];
         }
 
         return ['type' => null, 'model' => null, 'id' => null];
@@ -84,24 +95,37 @@ class KonsultasiController extends Controller
         $dokter = Dokter::find($id);
 
         if (! $dokter) {
+            $dokter = Dokter::where('nama', 'ilike', '%' . str_replace('_', ' ', $id) . '%')->first();
+        }
+
+        if (! $dokter) {
             return $this->errorResponse('Dokter tidak ditemukan', 404);
         }
 
         $totalPasien = Konsultasi::where('id_dokter', $dokter->id_dokter)->distinct('id_pasien')->count('id_pasien');
         $totalKonsultasi = Konsultasi::where('id_dokter', $dokter->id_dokter)->where('status', 'selesai')->count();
 
+        // Ambil ulasan dan rating riil dari tabel ulasan_dokter
+        $ulasanQuery = UlasanDokter::where('id_dokter', $dokter->id_dokter)
+            ->orWhere('id_dokter', (string) $id);
+        $totalUlasan = (clone $ulasanQuery)->count();
+        $avgRating = (clone $ulasanQuery)->avg('rating');
+        $rating = $totalUlasan > 0 ? round((float) $avgRating, 1) : 4.9;
+
         $detail = [
             'dokter' => $dokter,
             'statistik' => [
                 'total_pasien_ditangani' => $totalPasien,
                 'total_konsultasi_selesai' => $totalKonsultasi,
-                'rating' => 4.9,
+                'total_ulasan' => $totalUlasan,
+                'rating' => $rating,
                 'pengalaman_tahun' => 8,
             ],
             'jadwal_praktik' => [
                 'Senin - Jumat' => '08:00 - 17:00 WIB',
                 'Sabtu' => '09:00 - 14:00 WIB',
             ],
+            'ulasan_terbaru' => (clone $ulasanQuery)->latest('created_at')->take(5)->get(),
         ];
 
         return $this->successResponse($detail, 'Detail profil dokter');
@@ -558,7 +582,7 @@ class KonsultasiController extends Controller
 
         $validator = Validator::make($request->all(), [
             'rating' => 'required|numeric|min:1|max:5',
-            'ulasan' => 'nullable|string',
+            'ulasan' => 'nullable|string|max:1000',
         ]);
 
         if ($validator->fails()) {
@@ -566,15 +590,181 @@ class KonsultasiController extends Controller
         }
 
         $konsultasi->update([
-            'rating' => $request->rating,
+            'rating' => (int) $request->rating,
             'ulasan' => $request->ulasan,
         ]);
 
+        // Sinkronisasi ke tabel ulasan_dokter di Supabase
+        $actor = $this->getActor($request);
+        $idPasien = $request->input('id_pasien') ?? $konsultasi->id_pasien ?? $actor['id'];
+        $namaPasien = $request->input('nama_pasien') ?? $konsultasi->pasien?->nama ?? ($actor['model']?->nama ?? null);
+
+        $ulasanDokter = UlasanDokter::updateOrCreate(
+            ['id_konsultasi' => (string) $konsultasi->id],
+            [
+                'id_dokter' => (string) $konsultasi->id_dokter,
+                'id_pasien' => $idPasien ? (string) $idPasien : null,
+                'nama_pasien' => $namaPasien ?: 'Pasien Anonim',
+                'rating' => (int) $request->rating,
+                'ulasan' => $request->ulasan,
+            ]
+        );
+
         return $this->successResponse([
+            'id' => $ulasanDokter->id,
             'id_konsultasi' => $konsultasi->id,
-            'rating' => $request->rating,
+            'id_dokter' => $konsultasi->id_dokter,
+            'id_pasien' => $ulasanDokter->id_pasien,
+            'nama_pasien' => $ulasanDokter->nama_pasien,
+            'rating' => (int) $request->rating,
             'ulasan' => $request->ulasan,
+            'created_at' => $ulasanDokter->created_at?->toISOString() ?? now()->toISOString(),
         ], 'Terima kasih atas ulasan dan rating yang Anda berikan kepada dokter!');
+    }
+
+    /**
+     * Simpan Rating & Ulasan Dokter (Direct dari Profil Dokter atau Sesi Konsultasi).
+     */
+    public function beriRatingDokter(Request $request, ?string $id = null): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'rating' => 'required|numeric|min:1|max:5',
+            'ulasan' => 'nullable|string|max:1000',
+            'id_dokter' => 'nullable|string',
+            'dokter_id' => 'nullable|string',
+            'id_pasien' => 'nullable',
+            'nama_pasien' => 'nullable|string|max:255',
+            'id_konsultasi' => 'nullable',
+            'konsultasi_id' => 'nullable',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->errorResponse('Validasi rating dokter gagal', 422, $validator->errors());
+        }
+
+        // Resolusi ID Dokter: Prioritas route parameter {id}, fallback request body
+        $targetDokterId = $id ?? $request->input('id_dokter') ?? $request->input('dokter_id');
+
+        if (! $targetDokterId) {
+            return $this->errorResponse('ID Dokter wajib diisi', 422, [
+                'id_dokter' => ['ID Dokter tidak boleh kosong.'],
+            ]);
+        }
+
+        // Cari data dokter di database jika ada
+        $dokter = Dokter::find($targetDokterId);
+        if (! $dokter) {
+            $dokter = Dokter::where('nama', 'ilike', '%' . str_replace('_', ' ', $targetDokterId) . '%')->first();
+        }
+
+        $idDokterDb = $dokter ? $dokter->id_dokter : (string) $targetDokterId;
+
+        // Resolusi Actor / Pasien login
+        $actor = $this->getActor($request);
+        $idPasien = $request->input('id_pasien') ?? ($actor['type'] === 'pasien' ? $actor['id'] : null);
+        $namaPasien = $request->input('nama_pasien') ?? ($actor['model']?->nama ?? null);
+
+        if (! $namaPasien && $idPasien) {
+            $pasienData = Pasien::find($idPasien);
+            $namaPasien = $pasienData?->nama;
+        }
+
+        // Cek jika ada id_konsultasi untuk sinkronisasi balik ke tabel konsultasi
+        $idKonsultasi = $request->input('id_konsultasi') ?? $request->input('konsultasi_id');
+        if ($idKonsultasi) {
+            $konsultasi = Konsultasi::find($idKonsultasi);
+            if ($konsultasi) {
+                $konsultasi->update([
+                    'rating' => (int) $request->rating,
+                    'ulasan' => $request->ulasan,
+                ]);
+
+                if (! $idDokterDb) {
+                    $idDokterDb = (string) $konsultasi->id_dokter;
+                }
+                if (! $idPasien) {
+                    $idPasien = (string) $konsultasi->id_pasien;
+                }
+                if (! $namaPasien && $konsultasi->pasien) {
+                    $namaPasien = $konsultasi->pasien->nama;
+                }
+            }
+        }
+
+        // Simpan ke tabel ulasan_dokter
+        $matchCriteria = [];
+        if ($idKonsultasi) {
+            $matchCriteria['id_konsultasi'] = (string) $idKonsultasi;
+        } elseif ($idPasien) {
+            $matchCriteria = [
+                'id_dokter' => (string) $idDokterDb,
+                'id_pasien' => (string) $idPasien,
+            ];
+        }
+
+        $payload = [
+            'id_dokter' => (string) $idDokterDb,
+            'id_pasien' => $idPasien ? (string) $idPasien : null,
+            'nama_pasien' => $namaPasien ?: 'Pasien Anonim',
+            'id_konsultasi' => $idKonsultasi ? (string) $idKonsultasi : null,
+            'rating' => (int) $request->rating,
+            'ulasan' => $request->ulasan,
+        ];
+
+        if (! empty($matchCriteria)) {
+            $ulasanDokter = UlasanDokter::updateOrCreate($matchCriteria, $payload);
+        } else {
+            $ulasanDokter = UlasanDokter::create($payload);
+        }
+
+        return $this->successResponse([
+            'id' => $ulasanDokter->id,
+            'id_dokter' => $ulasanDokter->id_dokter,
+            'id_pasien' => $ulasanDokter->id_pasien,
+            'nama_pasien' => $ulasanDokter->nama_pasien,
+            'id_konsultasi' => $ulasanDokter->id_konsultasi,
+            'rating' => $ulasanDokter->rating,
+            'ulasan' => $ulasanDokter->ulasan,
+            'created_at' => $ulasanDokter->created_at?->toISOString() ?? now()->toISOString(),
+        ], 'Penilaian dokter berhasil disimpan.');
+    }
+
+    /**
+     * Dapatkan daftar ulasan dan statistik rating untuk dokter tertentu.
+     */
+    public function getDokterUlasan(Request $request, int|string $id): JsonResponse
+    {
+        $dokter = Dokter::find($id);
+        if (! $dokter) {
+            $dokter = Dokter::where('nama', 'ilike', '%' . str_replace('_', ' ', $id) . '%')->first();
+        }
+
+        $targetId = $dokter ? $dokter->id_dokter : (string) $id;
+
+        $ulasanList = UlasanDokter::where('id_dokter', $targetId)
+            ->orWhere('id_dokter', (string) $id)
+            ->latest('created_at')
+            ->get();
+
+        $avgRating = $ulasanList->avg('rating');
+        $totalUlasan = $ulasanList->count();
+
+        $distribusi = [
+            5 => $ulasanList->where('rating', 5)->count(),
+            4 => $ulasanList->where('rating', 4)->count(),
+            3 => $ulasanList->where('rating', 3)->count(),
+            2 => $ulasanList->where('rating', 2)->count(),
+            1 => $ulasanList->where('rating', 1)->count(),
+        ];
+
+        return $this->successResponse([
+            'id_dokter' => $targetId,
+            'nama_dokter' => $dokter?->nama,
+            'rating_rata_rata' => $totalUlasan > 0 ? round((float) $avgRating, 1) : 5.0,
+            'total_ulasan' => $totalUlasan,
+            'distribusi_bintang' => $distribusi,
+            'daftar_ulasan' => $ulasanList,
+        ], 'Daftar ulasan dokter berhasil diambil');
     }
 
     /**

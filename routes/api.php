@@ -74,6 +74,15 @@ Route::get('/pragi/pertanyaan', [PasienController::class, 'getPragiQuestions']);
 // Public Payment Gateway Callback / Webhook Simulator
 Route::post('/konsultasi/payment-callback', [KonsultasiController::class, 'paymentCallback']);
 
+// Rating & Ulasan Dokter (Mendukung auth Sanctum opsional / public)
+Route::post('/konsultasi/dokter/{id}/rating', [KonsultasiController::class, 'beriRatingDokter']);
+Route::post('/konsultasi/dokter/rating', [KonsultasiController::class, 'beriRatingDokter']);
+Route::post('/dokter/{id}/rating', [KonsultasiController::class, 'beriRatingDokter']);
+Route::get('/konsultasi/dokter/{id}/rating', [KonsultasiController::class, 'getDokterUlasan']);
+Route::get('/konsultasi/dokter/{id}/ulasan', [KonsultasiController::class, 'getDokterUlasan']);
+Route::get('/dokter/{id}/rating', [KonsultasiController::class, 'getDokterUlasan']);
+Route::get('/dokter/{id}/ulasan', [KonsultasiController::class, 'getDokterUlasan']);
+
 // =========================================================================
 // 2. SANCTUM PROTECTED ROUTES (auth:sanctum)
 // Semua endpoint di bawah ini WAJIB menyertakan Header:
@@ -168,6 +177,10 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/kategori-dokter', [KonsultasiController::class, 'getKategoriDokter']);
         Route::get('/dokter', [KonsultasiController::class, 'getDokterList']);
         Route::get('/dokter/{id}', [KonsultasiController::class, 'getDokterDetail']);
+        Route::get('/dokter/{id}/rating', [KonsultasiController::class, 'getDokterUlasan']);
+        Route::get('/dokter/{id}/ulasan', [KonsultasiController::class, 'getDokterUlasan']);
+        Route::post('/dokter/{id}/rating', [KonsultasiController::class, 'beriRatingDokter']);
+        Route::post('/dokter/rating', [KonsultasiController::class, 'beriRatingDokter']);
         Route::post('/booking', [KonsultasiController::class, 'bookingDokter']);
         Route::get('/{id}', [KonsultasiController::class, 'getDetailKonsultasi']);
         Route::post('/{id}/bayar', [KonsultasiController::class, 'bayarKonsultasi']);
@@ -228,6 +241,12 @@ Route::middleware('auth:sanctum')->group(function () {
         // 6. Manajemen Perangkat Login (Sanctum Tokens)
         Route::get('/profile/perangkat', [DokterController::class, 'getLoginDevices']);
         Route::delete('/profile/perangkat/{id_token}', [DokterController::class, 'revokeDevice']);
+
+        // 7. Rating & Ulasan Dokter
+        Route::get('/{id}/rating', [KonsultasiController::class, 'getDokterUlasan']);
+        Route::get('/{id}/ulasan', [KonsultasiController::class, 'getDokterUlasan']);
+        Route::post('/{id}/rating', [KonsultasiController::class, 'beriRatingDokter']);
+        Route::post('/rating', [KonsultasiController::class, 'beriRatingDokter']);
     });
 
     // --- E. APOTEK ROUTES ---
