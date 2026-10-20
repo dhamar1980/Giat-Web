@@ -156,10 +156,43 @@ class GiatApiTest extends TestCase
         // PRAGI Skrining & Chatbot AI
         $this->getJson('/api/pasien/pragi/pertanyaan')
             ->assertStatus(200)
-            ->assertJson(['success' => true]);
+            ->assertJson(['success' => true])
+            ->assertJsonStructure([
+                'data' => [
+                    'judul',
+                    'total_pertanyaan',
+                    'pertanyaan',
+                    'contoh_hasil_jawaban_raw',
+                    'contoh_hasil_jawaban_encoded',
+                    'panduan_encoding',
+                ],
+            ]);
 
+        // Uji submit skrining format legacy
         $this->postJson('/api/pasien/pragi/skrining', [
             'jawaban' => [1 => 'ya', 2 => 'tidak', 3 => 'tidak', 4 => 'tidak', 5 => 'tidak', 6 => 'tidak', 7 => 'tidak', 8 => 'tidak', 9 => 'tidak', 10 => 'tidak'],
+        ])->assertStatus(201)->assertJson(['success' => true]);
+
+        // Uji submit skrining format AI PRAGI (16 pertanyaan / fitur)
+        $this->postJson('/api/pasien/pragi/skrining', [
+            'jawaban' => [
+                'HeartDisease' => 'No',
+                'BMI' => 26.45,
+                'Smoking' => 'No',
+                'AlcoholDrinking' => 'No',
+                'Stroke' => 'No',
+                'PhysicalHealth' => 0,
+                'MentalHealth' => 0,
+                'DiffWalking' => 'No',
+                'Sex' => 'Female',
+                'AgeCategory' => '80 or older',
+                'Race' => 'White',
+                'Diabetic' => 'No, borderline diabetes',
+                'PhysicalActivity' => 'No',
+                'GenHealth' => 'Fair',
+                'SleepTime' => 5,
+                'Asthma' => 'No',
+            ],
         ])->assertStatus(201)->assertJson(['success' => true]);
 
         $this->postJson('/api/pasien/pragi/chat', [

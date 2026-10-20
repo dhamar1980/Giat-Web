@@ -506,26 +506,20 @@ class DummyDataSeeder extends Seeder
         }
 
         // ==========================================
-        // 7. SEED PRAGI PERTANYAAN
+        // 7. SEED PRAGI PERTANYAAN (AI PRAGI)
         // ==========================================
-        $pertanyaanList = [
-            ['pertanyaan' => 'Apakah Anda memiliki riwayat tekanan darah tinggi (hipertensi)?', 'kategori' => 'Riwayat Medis', 'urutan' => 1],
-            ['pertanyaan' => 'Apakah Anda memiliki riwayat diabetes melitus atau kadar gula darah tinggi?', 'kategori' => 'Riwayat Medis', 'urutan' => 2],
-            ['pertanyaan' => 'Apakah ada anggota keluarga kandung yang memiliki riwayat penyakit ginjal?', 'kategori' => 'Genetika', 'urutan' => 3],
-            ['pertanyaan' => 'Apakah Anda sering mengalami pembengkakan pada kelopak mata, pergelangan kaki, atau tungkai?', 'kategori' => 'Gejala Fisik', 'urutan' => 4],
-            ['pertanyaan' => 'Apakah urine Anda sering tampak berbusa tebal, keruh, atau berwarna kemerahan?', 'kategori' => 'Urinasi', 'urutan' => 5],
-            ['pertanyaan' => 'Apakah Anda sering terbangun di malam hari lebih dari 2 kali untuk buang air kecil?', 'kategori' => 'Urinasi', 'urutan' => 6],
-            ['pertanyaan' => 'Apakah Anda rutin mengonsumsi jamu pegal linu atau obat pereda nyeri tanpa resep dokter?', 'kategori' => 'Gaya Hidup & Obat', 'urutan' => 7],
-            ['pertanyaan' => 'Apakah Anda sering merasa cepat lelah, lemas, atau sesak napas saat aktivitas ringan?', 'kategori' => 'Gejala Fisik', 'urutan' => 8],
-        ];
-
         $pertanyaanModels = [];
-        foreach ($pertanyaanList as $pt) {
+        foreach (\App\Services\PragiAiService::get16Questions() as $pt) {
             $pertanyaanModels[] = PragiPertanyaan::create([
                 'id' => (string) Str::uuid(),
+                'kode_field' => $pt['kode_field'],
                 'pertanyaan' => $pt['pertanyaan'],
+                'pertanyaan_en' => $pt['pertanyaan_en'] ?? null,
                 'kategori' => $pt['kategori'],
-                'urutan' => $pt['urutan'],
+                'tipe_input' => $pt['tipe_input'],
+                'opsi_jawaban' => $pt['opsi_jawaban'],
+                'urutan' => $pt['id'],
+                'bobot' => 1,
                 'is_active' => true,
             ]);
         }

@@ -577,7 +577,7 @@
 					}
 				},
 				{
-					"name": "Pertanyaan Skrining PRAGI CKD",
+					"name": "Pertanyaan Skrining AI PRAGI",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -592,7 +592,7 @@
 					}
 				},
 				{
-					"name": "Submit Skrining PRAGI",
+					"name": "Submit Skrining AI PRAGI (16 Pertanyaan/Fitur)",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -602,7 +602,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"jawaban\": {\n    \"1\": \"ya\",\n    \"2\": \"tidak\",\n    \"3\": \"tidak\",\n    \"4\": \"ya\",\n    \"5\": \"tidak\",\n    \"6\": \"tidak\",\n    \"7\": \"tidak\",\n    \"8\": \"tidak\",\n    \"9\": \"tidak\",\n    \"10\": \"tidak\"\n  }\n}"
+							"raw": "{\n  \"jawaban\": {\n    \"HeartDisease\": 0,\n    \"Smoking\": 1,\n    \"AlcoholDrinking\": 0,\n    \"Stroke\": 0,\n    \"DiffWalking\": 0,\n    \"PhysicalActivity\": 1,\n    \"Asthma\": 0,\n    \"KidneyDisease\": 0,\n    \"Sex\": 1,\n    \"Diabetic\": 0,\n    \"GenHealth\": 2,\n    \"AgeCategory\": 4,\n    \"Race\": \"Asian\"\n  }\n}"
 						},
 						"url": {
 							"raw": "{{base_url}}/pasien/pragi/skrining",

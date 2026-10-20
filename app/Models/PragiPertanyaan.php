@@ -18,15 +18,22 @@ class PragiPertanyaan extends Model
 
     protected $fillable = [
         'id',
+        'kode_field',
         'pertanyaan',
+        'pertanyaan_en',
         'kategori',
+        'tipe_input',
+        'opsi_jawaban',
         'urutan',
+        'bobot',
         'is_active',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
         'urutan' => 'integer',
+        'bobot' => 'integer',
+        'opsi_jawaban' => 'array',
     ];
 
     public function jawabanDetail(): HasMany

@@ -17,6 +17,7 @@ use App\Models\PragiPertanyaan;
 use App\Models\Reminder;
 use App\Models\ResepObat;
 use App\Models\User;
+use App\Services\PragiAiService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -730,38 +731,11 @@ class PasienController extends Controller
     // 5. PRAGI (Skrining Risiko CKD & Chatbot AI PRAGI)
     // =========================================================================
 
-    public function getPragiQuestions(): JsonResponse
+    public function getPragiQuestions(Request $request): JsonResponse
     {
-        $dbQuestions = PragiPertanyaan::where('is_active', true)
-            ->orderBy('urutan', 'asc')
-            ->get();
+        $catalog = PragiAiService::getQuestionsCatalog();
 
-        if ($dbQuestions->isNotEmpty()) {
-            return $this->successResponse([
-                'judul' => 'Kuesioner Skrining Risiko Penyakit Ginjal Kronis (PRAGI - GIAT)',
-                'total_pertanyaan' => $dbQuestions->count(),
-                'pertanyaan' => $dbQuestions,
-            ], 'Daftar pertanyaan skrining PRAGI');
-        }
-
-        $questions = [
-            ['id' => 1, 'pertanyaan' => 'Apakah Anda sering merasakan nyeri, rasa pegal, atau ngilu di area pinggang belakang?', 'bobot' => 2],
-            ['id' => 2, 'pertanyaan' => 'Apakah Anda memiliki riwayat diabetes melitus (gula darah tinggi)?', 'bobot' => 2],
-            ['id' => 3, 'pertanyaan' => 'Apakah terdapat pembengkakan pada kaki, pergelangan kaki, atau wajah di pagi hari?', 'bobot' => 2],
-            ['id' => 4, 'pertanyaan' => 'Apakah terjadi perubahan frekuensi buang air kecil (terutama lebih sering di malam hari)?', 'bobot' => 1],
-            ['id' => 5, 'pertanyaan' => 'Apakah warna air kencing Anda berbusa, keruh, atau tampak kemerahan?', 'bobot' => 2],
-            ['id' => 6, 'pertanyaan' => 'Apakah ada anggota keluarga sedarah yang memiliki riwayat penyakit ginjal kronis (CKD)?', 'bobot' => 1],
-            ['id' => 7, 'pertanyaan' => 'Apakah Anda sering mengonsumsi obat antinyeri/pereda sakit (NSAID seperti asam mefenamat/ibuprofen) dalam jangka panjang?', 'bobot' => 1],
-            ['id' => 8, 'pertanyaan' => 'Apakah Anda sering merasa cepat lelah, lemas, pucat, atau sulit berkonsentrasi (anemia)?', 'bobot' => 1],
-            ['id' => 9, 'pertanyaan' => 'Apakah Anda sering mengalami mual, muntah, atau nafsu makan menurun tanpa sebab jelas?', 'bobot' => 1],
-            ['id' => 10, 'pertanyaan' => 'Apakah usia Anda saat ini 50 tahun ke atas?', 'bobot' => 1],
-        ];
-
-        return $this->successResponse([
-            'judul' => 'Kuesioner Skrining Risiko Penyakit Ginjal Kronis (PRAGI - GIAT)',
-            'total_pertanyaan' => count($questions),
-            'pertanyaan' => $questions,
-        ], 'Daftar pertanyaan skrining PRAGI');
+        return $this->successResponse($catalog, 'Daftar 16 pertanyaan dan opsi jawaban AI PRAGI');
     }
 
     public function submitPragi(Request $request): JsonResponse
@@ -772,7 +746,7 @@ class PasienController extends Controller
         }
 
         $validator = Validator::make($request->all(), [
-            'jawaban' => 'required|array|min:10',
+            'jawaban' => 'required|array',
         ]);
 
         if ($validator->fails()) {
@@ -780,26 +754,10 @@ class PasienController extends Controller
         }
 
         $jawaban = $request->jawaban;
-        $skor = 0;
-        $bobotMap = [1 => 2, 2 => 2, 3 => 2, 4 => 1, 5 => 2, 6 => 1, 7 => 1, 8 => 1, 9 => 1, 10 => 1];
-
-        foreach ($jawaban as $qId => $ans) {
-            $isYes = in_array(strtolower((string) $ans), ['1', 'true', 'ya', 'yes'], true);
-            if ($isYes && isset($bobotMap[$qId])) {
-                $skor += $bobotMap[$qId];
-            }
-        }
-
-        if ($skor <= 2) {
-            $prediksi = 'Risiko Rendah CKD';
-            $rekomendasi = 'Fungsi ginjal Anda saat ini dinilai stabil dan berisiko rendah. Pertahankan pola hidup sehat: minum air putih minimal 2 liter/hari, batasi konsumsi garam dan gula berlebih, hindari konsumsi obat antinyeri berulang tanpa resep, serta lakukan pemeriksaan rutin berkala.';
-        } elseif ($skor <= 5) {
-            $prediksi = 'Risiko Sedang CKD';
-            $rekomendasi = 'Terdeteksi beberapa faktor risiko ginjal (skor: ' . $skor . '). Disarankan untuk membatasi konsumsi makanan olahan/tinggi garam, menjaga kecukupan cairan secara rutin di menu Pantau, serta konsultasikan dengan Dokter Spesialis Penyakit Dalam atau Dokter Ginjal.';
-        } else {
-            $prediksi = 'Risiko Tinggi CKD';
-            $rekomendasi = 'PERINGATAN: Terdeteksi banyak indikator gejala penurunan fungsi ginjal (skor: ' . $skor . '). Segera jadwalkan konsultasi dengan Dokter Ginjal atau Dokter Spesialis Penyakit Dalam melalui menu Konsultasi GIAT.';
-        }
+        $evaluasi = PragiAiService::evaluateScreening($jawaban);
+        $skor = $evaluasi['skor'];
+        $prediksi = $evaluasi['prediksi'];
+        $rekomendasi = $evaluasi['rekomendasi'];
 
         $pragi = Pragi::create([
             'id_pasien' => $pasien->id_pasien,
@@ -810,22 +768,29 @@ class PasienController extends Controller
         ]);
 
         // Buat notifikasi jika risiko tinggi
-        if ($skor > 5) {
+        if ($skor > 5 || $evaluasi['kategori_risiko'] === 'tinggi') {
             Notifikasi::create([
                 'id_user' => $pasien->id_pasien,
                 'role' => 'pasien',
                 'judul' => 'Perhatian: Hasil Skrining PRAGI Berisiko Tinggi',
-                'pesan' => 'Hasil skrining menunjukkan skor ' . $skor . '. Disarankan untuk segera melakukan konsultasi dengan Dokter Ginjal di aplikasi GIAT.',
+                'pesan' => 'Hasil skrining menunjukkan skor ' . $skor . ' (' . $prediksi . '). Disarankan untuk segera melakukan konsultasi dengan Dokter Ginjal di aplikasi GIAT.',
                 'tipe' => 'pragi',
-                'data' => ['id_pragi' => $pragi->id_pragi, 'skor' => $skor],
+                'data' => [
+                    'id_pragi' => $pragi->id_pragi,
+                    'skor' => $skor,
+                    'kategori_risiko' => $evaluasi['kategori_risiko'],
+                    'faktor_risiko' => $evaluasi['faktor_risiko_teridentifikasi'] ?? [],
+                ],
             ]);
         }
 
         return $this->successResponse([
             'id_pragi' => $pragi->id_pragi,
             'skor' => $skor,
+            'kategori_risiko' => $evaluasi['kategori_risiko'],
             'hasil_prediksi' => $prediksi,
             'rekomendasi' => $rekomendasi,
+            'faktor_risiko' => $evaluasi['faktor_risiko_teridentifikasi'] ?? [],
             'tanggal_screening' => $pragi->tanggal_screening,
         ], 'Skrining PRAGI berhasil diproses', 201);
     }
