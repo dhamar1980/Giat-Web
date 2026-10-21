@@ -203,12 +203,16 @@ Route::middleware('auth:sanctum')->group(function () {
         // Resep Elektronik dari Konsultasi
         Route::get('/{id}/resep', [KonsultasiController::class, 'getResepKonsultasi']);
 
-        // Chat Konsultasi Realtime
+        // Chat Konsultasi Realtime & Firebase RTDB
         Route::get('/{id}/pesan', [KonsultasiController::class, 'getMessages']);
         Route::post('/{id}/pesan', [KonsultasiController::class, 'sendMessage']);
+        Route::post('/{id}/typing', [KonsultasiController::class, 'typingIndicator']);
+        Route::get('/{id}/firebase-channel', [KonsultasiController::class, 'getFirebaseChannel']);
 
-        // Video Call Dokter - Pasien
+        // Video Call & Signaling Dokter - Pasien (Jitsi + Firebase RTDB)
         Route::get('/{id}/video-call', [KonsultasiController::class, 'getVideoCall']);
+        Route::post('/{id}/video-call/start', [KonsultasiController::class, 'startVideoCall']);
+        Route::post('/{id}/video-call/signal', [KonsultasiController::class, 'signalVideoCall']);
         Route::post('/{id}/video-call/end', [KonsultasiController::class, 'endVideoCall']);
 
         // Selesaikan Sesi Konsultasi

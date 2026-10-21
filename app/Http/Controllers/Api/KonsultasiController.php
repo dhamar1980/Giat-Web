@@ -13,9 +13,11 @@ use App\Models\Pasien;
 use App\Models\ResepObat;
 use App\Models\UlasanDokter;
 use App\Models\User;
+use App\Services\FirebaseService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
@@ -377,10 +379,11 @@ class KonsultasiController extends Controller
 
     /**
      * 5. Mengirim pesan chat (Konsep WhatsApp) antara pasien dan dokter.
+     * Tersimpan di database lokal & otomatis dipush ke Firebase Realtime Database.
      */
     public function sendMessage(Request $request, int|string $id): JsonResponse
     {
-        $konsultasi = Konsultasi::find($id);
+        $konsultasi = Konsultasi::with(['pasien', 'dokter'])->find($id);
         if (! $konsultasi) {
             return $this->errorResponse('Konsultasi tidak ditemukan', 404);
         }
@@ -408,23 +411,104 @@ class KonsultasiController extends Controller
             return $this->errorResponse('Akses ditolak. Anda harus login sebagai Pasien atau Dokter untuk mengirim pesan.', 403);
         }
 
+        $tipe = $request->input('tipe', 'text');
+        $attachment = $request->input('attachment');
+
         $pesan = KonsultasiPesan::create([
             'id_konsultasi' => $konsultasi->id_konsultasi,
             'id_sender' => $actor['id'],
             'pesan' => $request->pesan,
-            'attachment_url' => $request->attachment,
+            'attachment_url' => $attachment,
             'is_read' => false,
         ]);
+
+        $senderName = $actor['model']?->nama ?? ($actor['type'] === 'dokter' ? 'Dokter' : 'Pasien');
+
+        // Push ke Firebase Realtime Database node: konsultasi/{id}/messages
+        try {
+            /** @var FirebaseService $firebase */
+            $firebase = app(FirebaseService::class);
+            $firebase->pushRealtimeMessage($konsultasi->id_konsultasi, [
+                'id' => $pesan->id,
+                'id_sender' => (string) $actor['id'],
+                'sender_name' => $senderName,
+                'sender_role' => $actor['type'],
+                'pesan' => $pesan->pesan,
+                'tipe' => $tipe,
+                'attachment_url' => $pesan->attachment_url,
+                'created_at' => $pesan->created_at?->toDateTimeString() ?? now()->toDateTimeString(),
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('Push pesan ke Firebase RTDB gagal: ' . $e->getMessage());
+        }
 
         return $this->successResponse($pesan, 'Pesan terkirim', 201);
     }
 
     /**
-     * 6. Video Call: Mengambil room video call / memicu panggilan video call.
+     * 5b. Indikator sedang mengetik (Typing Indicator) pada chat konsultasi.
+     */
+    public function typingIndicator(Request $request, int|string $id): JsonResponse
+    {
+        $konsultasi = Konsultasi::find($id);
+        if (! $konsultasi) {
+            return $this->errorResponse('Konsultasi tidak ditemukan', 404);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'is_typing' => 'required|boolean',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->errorResponse('Validasi status mengetik gagal', 422, $validator->errors());
+        }
+
+        $actor = $this->getActor($request);
+        if (! $actor['type']) {
+            return $this->errorResponse('Akses ditolak. Anda harus login sebagai Pasien atau Dokter.', 403);
+        }
+
+        $role = $actor['type']; // 'pasien' | 'dokter'
+        $isTyping = filter_var($request->is_typing, FILTER_VALIDATE_BOOLEAN);
+
+        try {
+            /** @var FirebaseService $firebase */
+            $firebase = app(FirebaseService::class);
+            $firebase->updateTypingStatus($konsultasi->id_konsultasi, $role, $isTyping);
+        } catch (\Throwable $e) {
+            Log::warning('Gagal mengupdate typing status ke Firebase: ' . $e->getMessage());
+        }
+
+        return $this->successResponse([
+            'id_konsultasi' => $konsultasi->id_konsultasi,
+            'role' => $role,
+            'is_typing' => $isTyping,
+        ], 'Status sedang mengetik berhasil diperbarui');
+    }
+
+    /**
+     * 5c. Dapatkan informasi Channel / Path Realtime Database Firebase untuk sesi konsultasi.
+     */
+    public function getFirebaseChannel(Request $request, int|string $id): JsonResponse
+    {
+        $konsultasi = Konsultasi::find($id);
+        if (! $konsultasi) {
+            return $this->errorResponse('Konsultasi tidak ditemukan', 404);
+        }
+
+        /** @var FirebaseService $firebase */
+        $firebase = app(FirebaseService::class);
+        $channelInfo = $firebase->getFirebaseChannelInfo($konsultasi->id_konsultasi);
+
+        return $this->successResponse($channelInfo, 'Konfigurasi channel realtime Firebase');
+    }
+
+    /**
+     * 6. Video Call: Mengambil status room video call Jitsi dan kredensial.
      */
     public function getVideoCall(Request $request, int|string $id): JsonResponse
     {
-        $konsultasi = Konsultasi::with(['pasien', 'dokter'])->find($id);
+        $konsultasi = Konsultasi::with(['pasien', 'dokter', 'videoSession'])->find($id);
         if (! $konsultasi) {
             return $this->errorResponse('Konsultasi tidak ditemukan', 404);
         }
@@ -437,32 +521,252 @@ class KonsultasiController extends Controller
             return $this->errorResponse('Sesi konsultasi telah selesai', 403);
         }
 
-        if (! $konsultasi->room_id) {
-            $roomId = 'giat-meet-' . Str::uuid();
-            KonsultasiVideoSession::updateOrCreate(
+        $videoSession = $konsultasi->videoSession;
+        if (! $videoSession || ! $videoSession->room_id) {
+            $roomId = 'giat-room-' . Str::uuid();
+            $videoSession = KonsultasiVideoSession::updateOrCreate(
                 ['id_konsultasi' => $konsultasi->id],
-                ['room_id' => $roomId, 'status_panggilan' => 'berlangsung']
+                ['room_id' => $roomId, 'status_panggilan' => 'idle']
             );
             $konsultasi->load('videoSession');
+        } else {
+            $roomId = $videoSession->room_id;
         }
 
-        $videoUrl = "https://meet.jit.si/{$konsultasi->room_id}";
+        $videoUrl = "https://meet.jit.si/{$roomId}";
         $actor = $this->getActor($request);
 
         if ($request->input('notify_chat', false)) {
-            KonsultasiPesan::create([
+            $pesan = KonsultasiPesan::create([
                 'id_konsultasi' => $konsultasi->id_konsultasi,
-                'id_sender' => $actor['id'],
+                'id_sender' => $actor['id'] ?? $konsultasi->id_dokter,
                 'pesan' => "Panggilan video call dimulai. Klik tautan untuk bergabung: {$videoUrl}",
             ]);
+
+            try {
+                /** @var FirebaseService $firebase */
+                $firebase = app(FirebaseService::class);
+                $firebase->pushRealtimeMessage($konsultasi->id_konsultasi, [
+                    'id' => $pesan->id,
+                    'id_sender' => (string) ($actor['id'] ?? $konsultasi->id_dokter),
+                    'sender_name' => $actor['model']?->nama ?? 'Pengguna',
+                    'sender_role' => $actor['type'] ?? 'dokter',
+                    'pesan' => $pesan->pesan,
+                    'tipe' => 'video_call',
+                    'attachment_url' => $videoUrl,
+                    'created_at' => now()->toDateTimeString(),
+                ]);
+            } catch (\Throwable $e) {
+                // ignore
+            }
         }
 
         return $this->successResponse([
-            'room_id' => $konsultasi->room_id,
+            'id_konsultasi' => $konsultasi->id_konsultasi,
+            'room_id' => $roomId,
             'video_call_url' => $videoUrl,
-            'dokter' => $konsultasi->dokter->nama,
-            'pasien' => $konsultasi->pasien->nama,
+            'status_panggilan' => $videoSession->status_panggilan ?? 'idle',
+            'dokter' => $konsultasi->dokter?->nama,
+            'pasien' => $konsultasi->pasien?->nama,
         ], 'Informasi sesi video call');
+    }
+
+    /**
+     * 6b. Inisiasi panggilan video (Start Video Call) dengan signaling ringing.
+     */
+    public function startVideoCall(Request $request, int|string $id): JsonResponse
+    {
+        $konsultasi = Konsultasi::with(['pasien', 'dokter'])->find($id);
+        if (! $konsultasi) {
+            return $this->errorResponse('Konsultasi tidak ditemukan', 404);
+        }
+
+        if ($konsultasi->status_pembayaran !== 'lunas') {
+            return $this->errorResponse('Sesi belum dibayar. Harap selesaikan pembayaran terlebih dahulu.', 402);
+        }
+
+        if ($konsultasi->status_konsultasi === 'selesai' || $konsultasi->status_konsultasi === 'dibatalkan') {
+            return $this->errorResponse("Konsultasi tidak aktif (status: {$konsultasi->status_konsultasi})", 403);
+        }
+
+        $actor = $this->getActor($request);
+        if (! $actor['type']) {
+            return $this->errorResponse('Akses ditolak. Anda harus login sebagai Pasien atau Dokter.', 403);
+        }
+
+        $roomId = 'giat-room-' . Str::uuid();
+        $videoUrl = "https://meet.jit.si/{$roomId}";
+
+        KonsultasiVideoSession::updateOrCreate(
+            ['id_konsultasi' => $konsultasi->id],
+            [
+                'room_id' => $roomId,
+                'status_panggilan' => 'ringing',
+            ]
+        );
+
+        $callerName = $actor['model']?->nama ?? ($actor['type'] === 'dokter' ? 'Dokter' : 'Pasien');
+
+        // Push signal ringing ke Firebase RTDB
+        $signalData = [
+            'status' => 'ringing',
+            'caller_id' => (string) $actor['id'],
+            'caller_name' => $callerName,
+            'caller_role' => $actor['type'],
+            'room_id' => $roomId,
+            'timestamp' => Carbon::now()->timestamp,
+        ];
+
+        try {
+            /** @var FirebaseService $firebase */
+            $firebase = app(FirebaseService::class);
+            $firebase->updateCallSignal($konsultasi->id_konsultasi, $signalData);
+        } catch (\Throwable $e) {
+            Log::warning('Gagal update call signal ke Firebase: ' . $e->getMessage());
+        }
+
+        // Catat pesan chat panggilan masuk
+        if ($request->input('notify_chat', true)) {
+            $pesan = KonsultasiPesan::create([
+                'id_konsultasi' => $konsultasi->id_konsultasi,
+                'id_sender' => $actor['id'],
+                'pesan' => "Panggilan video call dimulai oleh {$callerName}. Menunggu jawaban...",
+            ]);
+
+            try {
+                $firebase = app(FirebaseService::class);
+                $firebase->pushRealtimeMessage($konsultasi->id_konsultasi, [
+                    'id' => $pesan->id,
+                    'id_sender' => (string) $actor['id'],
+                    'sender_name' => $callerName,
+                    'sender_role' => $actor['type'],
+                    'pesan' => $pesan->pesan,
+                    'tipe' => 'video_call',
+                    'attachment_url' => $videoUrl,
+                    'created_at' => now()->toDateTimeString(),
+                ]);
+            } catch (\Throwable $e) {
+                // ignore
+            }
+        }
+
+        return $this->successResponse([
+            'id_konsultasi' => $konsultasi->id_konsultasi,
+            'room_id' => $roomId,
+            'video_call_url' => $videoUrl,
+            'status_panggilan' => 'ringing',
+            'caller' => [
+                'id' => (string) $actor['id'],
+                'nama' => $callerName,
+                'role' => $actor['type'],
+            ],
+            'dokter' => $konsultasi->dokter?->nama,
+            'pasien' => $konsultasi->pasien?->nama,
+        ], 'Panggilan video call berhasil diinisiasi. Menunggu jawaban lawan bicara.', 201);
+    }
+
+    /**
+     * 6c. Respons sinyal video call (accept, reject, busy).
+     */
+    public function signalVideoCall(Request $request, int|string $id): JsonResponse
+    {
+        $konsultasi = Konsultasi::with(['pasien', 'dokter', 'videoSession'])->find($id);
+        if (! $konsultasi) {
+            return $this->errorResponse('Konsultasi tidak ditemukan', 404);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'status' => 'nullable|string|in:accept,reject,busy,connected,rejected,ended,ringing',
+            'signal' => 'nullable|string|in:accept,reject,busy,connected,rejected,ended,ringing',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->errorResponse('Validasi sinyal video call gagal', 422, $validator->errors());
+        }
+
+        $rawSignal = $request->input('signal') ?? $request->input('status');
+        if (! $rawSignal) {
+            return $this->errorResponse('Parameter signal atau status wajib diisi (accept, reject, busy, ended)', 422);
+        }
+
+        $mappedStatus = match ($rawSignal) {
+            'accept', 'connected' => 'connected',
+            'reject', 'rejected' => 'rejected',
+            'busy' => 'busy',
+            'ended' => 'ended',
+            default => 'ringing',
+        };
+
+        $actor = $this->getActor($request);
+        $responderName = $actor['model']?->nama ?? 'Pengguna GIAT';
+
+        $videoSession = $konsultasi->videoSession;
+        $roomId = $videoSession?->room_id ?? ($konsultasi->room_id ?? 'giat-room-' . Str::uuid());
+
+        KonsultasiVideoSession::updateOrCreate(
+            ['id_konsultasi' => $konsultasi->id],
+            [
+                'room_id' => $roomId,
+                'status_panggilan' => $mappedStatus,
+            ]
+        );
+
+        $signalData = [
+            'status' => $mappedStatus,
+            'responder_id' => (string) ($actor['id'] ?? ''),
+            'responder_name' => $responderName,
+            'responder_role' => $actor['type'] ?? 'user',
+            'room_id' => $roomId,
+            'timestamp' => Carbon::now()->timestamp,
+        ];
+
+        try {
+            /** @var FirebaseService $firebase */
+            $firebase = app(FirebaseService::class);
+            $firebase->updateCallSignal($konsultasi->id_konsultasi, $signalData);
+        } catch (\Throwable $e) {
+            Log::warning('Gagal update sinyal video call ke Firebase: ' . $e->getMessage());
+        }
+
+        if (in_array($mappedStatus, ['rejected', 'busy'])) {
+            $pesanText = $mappedStatus === 'rejected'
+                ? "Panggilan video ditolak oleh {$responderName}."
+                : "Panggilan video tidak dapat diangkat ({$responderName} sedang sibuk).";
+
+            $pesan = KonsultasiPesan::create([
+                'id_konsultasi' => $konsultasi->id_konsultasi,
+                'id_sender' => $actor['id'] ?? $konsultasi->id_dokter,
+                'pesan' => $pesanText,
+            ]);
+
+            try {
+                $firebase = app(FirebaseService::class);
+                $firebase->pushRealtimeMessage($konsultasi->id_konsultasi, [
+                    'id' => $pesan->id,
+                    'id_sender' => (string) ($actor['id'] ?? $konsultasi->id_dokter),
+                    'sender_name' => $responderName,
+                    'sender_role' => $actor['type'] ?? 'user',
+                    'pesan' => $pesanText,
+                    'tipe' => 'video_call',
+                    'attachment_url' => null,
+                    'created_at' => now()->toDateTimeString(),
+                ]);
+            } catch (\Throwable $e) {
+                // ignore
+            }
+        }
+
+        return $this->successResponse([
+            'id_konsultasi' => $konsultasi->id_konsultasi,
+            'status' => $mappedStatus,
+            'room_id' => $roomId,
+            'video_call_url' => "https://meet.jit.si/{$roomId}",
+            'responder' => [
+                'id' => (string) ($actor['id'] ?? ''),
+                'nama' => $responderName,
+                'role' => $actor['type'] ?? 'user',
+            ],
+        ], 'Sinyal panggilan video berhasil diproses');
     }
 
     /**
@@ -828,32 +1132,68 @@ class KonsultasiController extends Controller
 
     /**
      * 14. End video call and store duration.
+     * Mengakhiri panggilan, mencatat durasi di DB & push sinyal ended ke Firebase.
      */
     public function endVideoCall(Request $request, int|string $id): JsonResponse
     {
-        $konsultasi = Konsultasi::find($id);
+        $konsultasi = Konsultasi::with(['pasien', 'dokter', 'videoSession'])->find($id);
         if (! $konsultasi) {
             return $this->errorResponse('Konsultasi tidak ditemukan', 404);
         }
 
         $durasi = (int) $request->input('durasi_menit', 15);
+        $actor = $this->getActor($request);
+        $endedBy = $actor['model']?->nama ?? 'Pengguna GIAT';
+        $roomId = $konsultasi->videoSession?->room_id ?? ($konsultasi->room_id ?? 'giat-room-' . Str::uuid());
 
-        KonsultasiVideoSession::updateOrCreate(
+        $videoSession = KonsultasiVideoSession::updateOrCreate(
             ['id_konsultasi' => $konsultasi->id],
             [
+                'room_id' => $roomId,
                 'status_panggilan' => 'berakhir',
                 'durasi_menit' => $durasi,
             ]
         );
 
-        KonsultasiPesan::create([
-            'id_konsultasi' => $konsultasi->id,
-            'id_sender' => $konsultasi->id_dokter,
-            'pesan' => "Panggilan video call telah berakhir (Durasi: {$durasi} menit).",
+        // Update call signal di Firebase RTDB
+        try {
+            /** @var FirebaseService $firebase */
+            $firebase = app(FirebaseService::class);
+            $firebase->updateCallSignal($konsultasi->id_konsultasi, [
+                'status' => 'ended',
+                'durasi_menit' => $durasi,
+                'ended_by' => $endedBy,
+                'timestamp' => Carbon::now()->timestamp,
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('Gagal update status call ended ke Firebase: ' . $e->getMessage());
+        }
+
+        $pesanText = "Panggilan video call telah berakhir (Durasi: {$durasi} menit).";
+        $pesan = KonsultasiPesan::create([
+            'id_konsultasi' => $konsultasi->id_konsultasi,
+            'id_sender' => $actor['id'] ?? $konsultasi->id_dokter,
+            'pesan' => $pesanText,
         ]);
 
+        try {
+            $firebase = app(FirebaseService::class);
+            $firebase->pushRealtimeMessage($konsultasi->id_konsultasi, [
+                'id' => $pesan->id,
+                'id_sender' => (string) ($actor['id'] ?? $konsultasi->id_dokter),
+                'sender_name' => $endedBy,
+                'sender_role' => $actor['type'] ?? 'dokter',
+                'pesan' => $pesanText,
+                'tipe' => 'video_call',
+                'attachment_url' => null,
+                'created_at' => now()->toDateTimeString(),
+            ]);
+        } catch (\Throwable $e) {
+            // ignore
+        }
+
         return $this->successResponse([
-            'id_konsultasi' => $konsultasi->id,
+            'id_konsultasi' => $konsultasi->id_konsultasi,
             'status_panggilan' => 'berakhir',
             'durasi_menit' => $durasi,
         ], 'Sesi video call telah diakhiri');

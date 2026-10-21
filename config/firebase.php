@@ -59,6 +59,17 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Firebase Realtime Database URL
+    |--------------------------------------------------------------------------
+    |
+    | URL Firebase Realtime Database untuk modul Chat Realtime & Video Signaling.
+    | Contoh: "https://giat-app-default-rtdb.firebaseio.com"
+    |
+    */
+    'database_url' => env('FIREBASE_DATABASE_URL', 'https://' . env('FIREBASE_PROJECT_ID', 'giat-ginjal-sehat') . '-default-rtdb.firebaseio.com'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Mock / Development Mode
     |--------------------------------------------------------------------------
     |

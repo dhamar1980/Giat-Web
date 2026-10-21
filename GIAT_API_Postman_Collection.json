@@ -888,6 +888,101 @@
 							"path": ["konsultasi", "1", "video-call"]
 						}
 					}
+				},
+				{
+					"name": "Indikator Sedang Mengetik (Typing Indicator)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"is_typing\": true\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/konsultasi/1/typing",
+							"host": ["{{base_url}}"],
+							"path": ["konsultasi", "1", "typing"]
+						}
+					}
+				},
+				{
+					"name": "Info Realtime Channel Firebase",
+					"request": {
+						"method": "GET",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"url": {
+							"raw": "{{base_url}}/konsultasi/1/firebase-channel",
+							"host": ["{{base_url}}"],
+							"path": ["konsultasi", "1", "firebase-channel"]
+						}
+					}
+				},
+				{
+					"name": "Inisiasi Panggilan Video (Start Video Call)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"notify_chat\": true\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/konsultasi/1/video-call/start",
+							"host": ["{{base_url}}"],
+							"path": ["konsultasi", "1", "video-call", "start"]
+						}
+					}
+				},
+				{
+					"name": "Respon Sinyal Panggilan Video (Signal Video Call)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"signal\": \"accept\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/konsultasi/1/video-call/signal",
+							"host": ["{{base_url}}"],
+							"path": ["konsultasi", "1", "video-call", "signal"]
+						}
+					}
+				},
+				{
+					"name": "Akhiri Panggilan Video (End Video Call)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{"key": "Accept", "value": "application/json"},
+							{"key": "Content-Type", "value": "application/json"},
+							{"key": "Authorization", "value": "Bearer {{token}}"}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"durasi_menit\": 15\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/konsultasi/1/video-call/end",
+							"host": ["{{base_url}}"],
+							"path": ["konsultasi", "1", "video-call", "end"]
+						}
+					}
 				}
 			]
 		},

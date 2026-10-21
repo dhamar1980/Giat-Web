@@ -5,17 +5,23 @@ namespace App\Services;
 use Exception;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class FirebaseService
 {
     protected string $apiKey;
     protected string $projectId;
+    protected string $databaseUrl;
     protected string $identityToolkitUrl = 'https://identitytoolkit.googleapis.com/v1';
 
     public function __construct()
     {
         $this->apiKey = (string) config('firebase.api_key', env('FIREBASE_API_KEY', ''));
         $this->projectId = (string) config('firebase.project_id', env('FIREBASE_PROJECT_ID', ''));
+        $defaultRtdb = !empty($this->projectId)
+            ? "https://{$this->projectId}-default-rtdb.firebaseio.com"
+            : 'https://giat-ginjal-sehat-default-rtdb.firebaseio.com';
+        $this->databaseUrl = rtrim((string) config('firebase.database_url', env('FIREBASE_DATABASE_URL', $defaultRtdb)), '/');
     }
 
     /**
@@ -367,5 +373,145 @@ class FirebaseService
             'FEDERATED_USER_ID_ALREADY_LINKED' => 'Akun Google ini sudah terhubung dengan pengguna lain.',
             default => 'Otentikasi Firebase gagal: ' . $firebaseError,
         };
+    }
+
+    /**
+     * Get configured Realtime Database URL.
+     */
+    public function getDatabaseUrl(): string
+    {
+        return $this->databaseUrl;
+    }
+
+    /**
+     * Send payload to Firebase Realtime Database via REST API.
+     *
+     * @param string $path Path within RTDB (e.g. "konsultasi/{id}/messages/{msgId}")
+     * @param mixed $data Array or scalar data to store
+     * @param string $method HTTP method (PUT, PATCH, POST)
+     * @return bool
+     */
+    public function writeRealtimeDatabase(string $path, mixed $data, string $method = 'PUT'): bool
+    {
+        $cleanPath = trim($path, '/');
+        $url = "{$this->databaseUrl}/{$cleanPath}.json";
+
+        try {
+            $request = Http::timeout(4)->contentType('application/json');
+            $body = is_string($data) && (str_starts_with($data, '{') || str_starts_with($data, '['))
+                ? $data
+                : json_encode($data);
+
+            $response = match (strtoupper($method)) {
+                'PATCH' => $request->withBody($body, 'application/json')->patch($url),
+                'POST' => $request->withBody($body, 'application/json')->post($url),
+                default => $request->withBody($body, 'application/json')->put($url),
+            };
+
+            if ($response->successful()) {
+                return true;
+            }
+
+            Log::warning("Firebase RTDB {$method} failed [{$response->status()}]: {$response->body()}", [
+                'path' => $cleanPath,
+            ]);
+            return false;
+        } catch (\Throwable $e) {
+            Log::warning('Firebase RTDB connection error: ' . $e->getMessage(), [
+                'path' => $cleanPath,
+            ]);
+            return false;
+        }
+    }
+
+    /**
+     * Push a realtime message to the Realtime Database under:
+     * konsultasi/{idKonsultasi}/messages/{messageId}
+     *
+     * @param string $idKonsultasi
+     * @param array $messageData
+     * @return bool
+     */
+    public function pushRealtimeMessage(string $idKonsultasi, array $messageData): bool
+    {
+        $messageId = $messageData['id'] ?? (string) Str::uuid();
+        $path = "konsultasi/{$idKonsultasi}/messages/{$messageId}";
+
+        $payload = [
+            'id' => $messageId,
+            'id_sender' => (string) ($messageData['id_sender'] ?? ''),
+            'sender_name' => (string) ($messageData['sender_name'] ?? 'Pengguna'),
+            'sender_role' => (string) ($messageData['sender_role'] ?? 'pasien'),
+            'pesan' => (string) ($messageData['pesan'] ?? ''),
+            'tipe' => (string) ($messageData['tipe'] ?? 'text'),
+            'attachment_url' => $messageData['attachment_url'] ?? null,
+            'created_at' => (string) ($messageData['created_at'] ?? now()->toDateTimeString()),
+        ];
+
+        $written = $this->writeRealtimeDatabase($path, $payload, 'PUT');
+
+        // Also update session_info timestamp
+        $this->writeRealtimeDatabase("konsultasi/{$idKonsultasi}/session_info", [
+            'status_konsultasi' => $messageData['status_konsultasi'] ?? 'berlangsung',
+            'updated_at' => now()->timestamp,
+        ], 'PATCH');
+
+        return $written;
+    }
+
+    /**
+     * Update typing indicator in Firebase RTDB:
+     * konsultasi/{idKonsultasi}/typing/{role}
+     *
+     * @param string $idKonsultasi
+     * @param string $role ('pasien' | 'dokter')
+     * @param bool $isTyping
+     * @return bool
+     */
+    public function updateTypingStatus(string $idKonsultasi, string $role, bool $isTyping): bool
+    {
+        $roleKey = strtolower($role);
+        $path = "konsultasi/{$idKonsultasi}/typing/{$roleKey}";
+
+        return $this->writeRealtimeDatabase($path, $isTyping, 'PUT');
+    }
+
+    /**
+     * Update call signaling state in Firebase RTDB:
+     * konsultasi/{idKonsultasi}/call_signaling
+     *
+     * @param string $idKonsultasi
+     * @param array $signalData
+     * @return bool
+     */
+    public function updateCallSignal(string $idKonsultasi, array $signalData): bool
+    {
+        $path = "konsultasi/{$idKonsultasi}/call_signaling";
+        $payload = array_merge([
+            'status' => 'idle',
+            'timestamp' => now()->timestamp,
+        ], $signalData);
+
+        return $this->writeRealtimeDatabase($path, $payload, 'PATCH');
+    }
+
+    /**
+     * Get Realtime Database channel and path info for client listener (Flutter/Web).
+     *
+     * @param string $idKonsultasi
+     * @return array
+     */
+    public function getFirebaseChannelInfo(string $idKonsultasi): array
+    {
+        return [
+            'id_konsultasi' => $idKonsultasi,
+            'database_url' => $this->databaseUrl,
+            'project_id' => $this->projectId,
+            'channel_path' => "konsultasi/{$idKonsultasi}",
+            'messages_path' => "konsultasi/{$idKonsultasi}/messages",
+            'typing_path' => "konsultasi/{$idKonsultasi}/typing",
+            'call_signaling_path' => "konsultasi/{$idKonsultasi}/call_signaling",
+            'session_info_path' => "konsultasi/{$idKonsultasi}/session_info",
+        ];
     }
 }
